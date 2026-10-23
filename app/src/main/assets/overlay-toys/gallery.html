@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; background: transparent; font-family: sans-serif; }
+    body { padding: 14px 16px 18px; }
+    #gallery { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+    .avatar-card {
+      min-height: 104px; padding: 7px 4px 8px; border-radius: 16px;
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+      background: rgba(120, 130, 160, .10); border: 1px solid rgba(140, 150, 180, .22);
+      color: var(--label, #475569); cursor: pointer; -webkit-tap-highlight-color: transparent;
+    }
+    .avatar-card.selected { border: 2px solid var(--accent, #8b5cf6); background: rgba(139, 92, 246, .13); box-shadow: 0 0 0 2px rgba(139, 92, 246, .10); }
+    .avatar-name { font-size: 11px; line-height: 15px; text-transform: capitalize; }
+    .avatar-card.selected .avatar-name::after { content: "  ✓"; color: var(--accent, #8b5cf6); font-weight: 700; }
+    .avatar-image { width: 72px; height: 68px; display: block; }
+  </style>
+</head>
+<body>
+  <div id="gallery"></div>
+  <script>
+    const avatars = [
+      ["alien", "#70d920", "#b9fb54"], ["blob", "#04bd70", "#82ffb3"], ["cat", "#f47b24", "#ffc462"],
+      ["circle", "#862deb", "#bd7cff"], ["cloud", "#a9bddb", "#edf5ff"], ["droid", "#879bbd", "#d9e8ff"],
+      ["drop", "#08c7c0", "#61fff0"], ["flower", "#20cf70", "#a6ff72"], ["ghost", "#d8e0ed", "#ffffff"],
+      ["hexagon", "#ed4847", "#ff9990"], ["mech", "#7895c9", "#c4d7ff"], ["pebble", "#9dcf69", "#d6f49c"],
+      ["pill", "#8885d8", "#d0c9ff"], ["puddle", "#ed69bb", "#ffa7dc"], ["square", "#21a9dc", "#88eaff"],
+      ["star", "#f1ce48", "#fff39a"], ["triangle", "#b438d4", "#ee85ff"]
+    ];
+    const shapes = {
+      alien: '<ellipse cx="40" cy="37" rx="23" ry="23"/>',
+      blob: '<path d="M18 37C15 24 25 14 36 18c8-8 24-2 25 9 12 7 7 27-5 29-8 10-24 5-27-1-10 1-16-8-11-18z"/>',
+      cat: '<path d="M18 28 16 10l16 10q8-3 16 0l16-10-2 19q6 9 2 20-6 13-24 13T20 49q-6-10-2-21z"/>',
+      circle: '<circle cx="40" cy="36" r="24"/>',
+      cloud: '<path d="M21 51q-12-1-12-13 0-11 13-13 4-15 20-12 12 1 14 14 15 1 15 13 0 12-14 12H22z"/>',
+      droid: '<path d="M38 14V8q0-4 4-4t4 4v7q16 3 16 17v17q0 10-11 10H29q-11 0-11-10V31q0-14 20-17z"/>',
+      drop: '<path d="M40 7Q34 19 22 32 9 47 22 58q16 13 33 0 13-11 0-26Q44 18 40 7z"/>',
+      flower: '<path d="M40 10q10-12 17 0 4 6 0 13 14-5 17 8 2 10-10 14 11 7 4 17-6 9-18 2-2 15-14 15-11 0-12-15-13 8-19-2-6-10 5-17Q-2 39 2 29q4-11 18-6-5-14 5-19 9-5 15 6z" transform="translate(2 2) scale(.95)"/>',
+      ghost: '<path d="M17 55V32q0-24 23-24t23 24v24q0 5-5 3l-6-5-7 5-7-5-7 5-7-5-6 5q-4 2-4-4z"/>',
+      hexagon: '<path d="M25 12h30l17 24-17 24H25L8 36z"/>',
+      mech: '<path d="M38 15V8q0-4 4-4t4 4v7q17 3 17 18v17q0 11-12 11H29Q17 61 17 50V33q0-15 21-18z"/>',
+      pebble: '<path d="M15 42q-3-15 11-24 16-10 34 0 15 9 7 25-7 14-29 15-20 1-23-16z"/>',
+      pill: '<rect x="12" y="19" width="56" height="36" rx="18"/>',
+      puddle: '<path d="M17 48q-8-13 6-21 3-16 18-14 11-1 16 11 16 5 10 21-6 14-24 12-20 7-26-9z"/>',
+      square: '<rect x="16" y="12" width="48" height="48" rx="11"/>',
+      star: '<path d="m40 7 9 18 20 3-15 14 4 21-18-10-18 10 4-21L11 28l20-3z"/>',
+      triangle: '<path d="M34 12q6-10 12 0l25 40q5 9-6 9H15q-11 0-6-9z"/>'
+    };
+    function icon(name, color, light) {
+      const antenna = name === "droid" || name === "mech" ? '<path d="M42 15V7" stroke="#526784" stroke-width="3"/><circle cx="42" cy="6" r="4" fill="#91a8ce"/>' : "";
+      const arms = name === "mech" || name === "droid" ? '<path d="M16 35h-5m58 0h-5" stroke="#7188ae" stroke-width="5" stroke-linecap="round"/>' : "";
+      return `<svg class="avatar-image" viewBox="0 0 80 70" aria-hidden="true"><defs><linearGradient id="g-${name}" x1="0" y1="0" x2="1" y2="1"><stop stop-color="${light}"/><stop offset="1" stop-color="${color}"/></linearGradient></defs>${antenna}${arms}<g fill="url(#g-${name})" stroke="rgba(40,50,70,.12)" stroke-width="1.2">${shapes[name]}</g><ellipse cx="32" cy="34" rx="2.4" ry="3.6" fill="#263247"/><ellipse cx="48" cy="34" rx="2.4" ry="3.6" fill="#263247"/><path d="M33 44q7 7 14 0" fill="none" stroke="#263247" stroke-width="2.4" stroke-linecap="round"/></svg>`;
+    }
+    const gallery = document.getElementById("gallery");
+    gallery.innerHTML = avatars.map(([name, color, light]) => `<button id="avatar-${name}" class="avatar-card" type="button" onclick="window.JarvisAvatarPicker?.selectAvatar('${name}')">${icon(name, color, light)}<span class="avatar-name">${name}</span></button>`).join("");
+    window.setSelectedAvatar = name => {
+      document.querySelectorAll(".avatar-card").forEach(card => card.classList.remove("selected"));
+      document.getElementById(`avatar-${name}`)?.classList.add("selected");
+    };
+    window.setGalleryTheme = (label, accent) => {
+      document.documentElement.style.setProperty("--label", label);
+      document.documentElement.style.setProperty("--accent", accent);
+    };
+    window.JarvisAvatarPicker?.pageReady();
+  </script>
+</body>
+</html>

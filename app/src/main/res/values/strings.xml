@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string-array name="overlay_edges">
+        <item>Right</item>
+        <item>Left</item>
+        <item>Top</item>
+        <item>Bottom</item>
+    </string-array>
+    <string name="app_name">JARVIS</string>
+    <string name="jarvis_title">JARVIS</string>
+
+    <string name="state_idle">IDLE</string>
+    <string name="state_listening">LISTENING</string>
+    <string name="state_thinking">THINKING</string>
+    <string name="state_speaking">SPEAKING</string>
+
+    <string name="btn_on">ON</string>
+    <string name="btn_off">OFF</string>
+    <string name="status_ready">READY</string>
+    <string name="status_live">LIVE</string>
+    <string name="status_connecting">CONNECTING&#8230;</string>
+    <string name="status_disconnected">OFFLINE</string>
+
+    <string name="settings_title">SETTINGS</string>
+    <string name="api_key_label">Gemini API Key</string>
+    <string name="api_key_hint">Paste your Gemini API key</string>
+    <string name="model_label">AI Model</string>
+    <string name="voice_label">Voice</string>
+    <string name="personality_label">Personality</string>
+    <string name="username_label">User Name</string>
+    <string name="username_hint">e.g. Tony Stark, Sir, Boss (optional)</string>
+
+    <string name="chat_history_title">Conversation History</string>
+    <string name="no_history">No conversation turns yet.</string>
+    <string name="clear_history">Clear History</string>
+
+    <string name="assistant_mode">Assistant Mode</string>
+    <string name="history_label">History</string>
+    <string name="desc_mute_mic">Mute or Unmute Mic</string>
+    <string name="desc_back">Back</string>
+    <string name="btn_save">Save</string>
+    <string name="btn_paste">Paste from clipboard</string>
+    <string name="chat_label_you">YOU</string>
+    <string name="chat_label_jarvis">JARVIS</string>
+
+    <string name="accessibility_service_desc">Provides automation for sending WhatsApp messages and executing approved hands-free actions for JARVIS.</string>
+    <string name="memory_title">MEMORY CORE</string>
+    <string name="memory_subtitle">Long-Term &amp; Contextual Knowledge</string>
+    <string name="search_memories">Search memories&#8230;</string>
+    <string name="add_memory">Add Memory</string>
+    <string name="no_memories">No memories recorded yet.</string>
+    <string name="category_all">All</string>
+    <string name="category_personal">Personal</string>
+    <string name="category_preferences">Preferences</string>
+    <string name="category_contacts">Contacts</string>
+    <string name="category_routines">Routines</string>
+    <string name="category_notes">Notes</string>
+</resources>
+

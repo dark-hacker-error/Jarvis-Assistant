@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="#40FFFFFF">
+    <item>
+        <layer-list>
+            <!-- 1. Ambient Glow & Liquid Base Sphere -->
+            <item>
+                <shape android:shape="oval">
+                    <gradient
+                        android:type="radial"
+                        android:gradientRadius="36dp"
+                        android:startColor="#60A5FA"
+                        android:centerColor="#2563EB"
+                        android:endColor="#1E40AF" />
+                    <stroke
+                        android:width="2dp"
+                        android:color="#E6FFFFFF" />
+                </shape>
+            </item>
+            <!-- 2. Top Specular Glass Crescent / Lens Reflection -->
+            <item
+                android:top="3dp"
+                android:left="12dp"
+                android:right="12dp"
+                android:height="14dp">
+                <shape android:shape="oval">
+                    <gradient
+                        android:type="linear"
+                        android:angle="270"
+                        android:startColor="#B3FFFFFF"
+                        android:endColor="#00FFFFFF" />
+                </shape>
+            </item>
+        </layer-list>
+    </item>
+</ripple>

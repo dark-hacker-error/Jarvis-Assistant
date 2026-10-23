@@ -1,0 +1,281 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/rootMainLayout"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:clipChildren="false"
+    android:clipToPadding="false"
+    android:background="?attr/themeBg">
+
+    <!-- Fragment Container for Home, Chat, Settings, and Updates -->
+    <FrameLayout
+        android:id="@+id/fragmentContainer"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <!-- Sleek Liquid Glass Floating Navigation Capsule -->
+    <LinearLayout
+        android:id="@+id/bottomDock"
+        android:layout_width="match_parent"
+        android:layout_height="64dp"
+        android:layout_marginStart="14dp"
+        android:layout_marginEnd="14dp"
+        android:layout_marginBottom="16dp"
+        android:background="@drawable/bg_jarvis_dock"
+        android:elevation="12dp"
+        android:clipChildren="false"
+        android:clipToPadding="false"
+        android:orientation="horizontal"
+        android:paddingStart="6dp"
+        android:paddingEnd="6dp"
+        android:paddingTop="3dp"
+        android:paddingBottom="3dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <!-- Tab 1: Home -->
+        <FrameLayout
+            android:id="@+id/tabHome"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:clickable="true"
+            android:focusable="true">
+
+            <LinearLayout
+                android:id="@+id/pillTabHome"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:layout_gravity="center"
+                android:minWidth="52dp"
+                android:orientation="vertical"
+                android:gravity="center"
+                android:paddingHorizontal="10dp"
+                android:paddingVertical="3dp"
+                android:background="@drawable/bg_dock_item_active">
+
+                <ImageView
+                    android:id="@+id/ivTabHome"
+                    android:layout_width="22dp"
+                    android:layout_height="22dp"
+                    android:src="@drawable/ic_nav_home"
+                    app:tint="?attr/themeTextPrimary"
+                    android:contentDescription="Home" />
+
+                <TextView
+                    android:id="@+id/tvTabHome"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Home"
+                    android:textSize="10sp"
+                    android:textStyle="bold"
+                    android:fontFamily="sans-serif-medium"
+                    android:includeFontPadding="false"
+                    android:layout_marginTop="2dp"
+                    android:textColor="?attr/themeTextPrimary" />
+            </LinearLayout>
+        </FrameLayout>
+
+        <!-- Tab 2: Chat -->
+        <FrameLayout
+            android:id="@+id/tabChat"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:clickable="true"
+            android:focusable="true">
+
+            <LinearLayout
+                android:id="@+id/pillTabChat"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:layout_gravity="center"
+                android:minWidth="52dp"
+                android:orientation="vertical"
+                android:gravity="center"
+                android:paddingHorizontal="10dp"
+                android:paddingVertical="3dp">
+
+                <ImageView
+                    android:id="@+id/ivTabChat"
+                    android:layout_width="22dp"
+                    android:layout_height="22dp"
+                    android:src="@drawable/ic_nav_chat"
+                    app:tint="?attr/themeTextMuted"
+                    android:contentDescription="Chat" />
+
+                <TextView
+                    android:id="@+id/tvTabChat"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Chat"
+                    android:textSize="10sp"
+                    android:textStyle="bold"
+                    android:fontFamily="sans-serif-medium"
+                    android:includeFontPadding="false"
+                    android:layout_marginTop="2dp"
+                    android:textColor="?attr/themeTextMuted" />
+            </LinearLayout>
+        </FrameLayout>
+
+        <!-- Tab 3: Voice / Mic (Hero Highlighted Action) -->
+        <FrameLayout
+            android:id="@+id/tabMic"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:clipChildren="false"
+            android:clipToPadding="false"
+            android:clickable="true"
+            android:focusable="true">
+
+            <LinearLayout
+                android:id="@+id/pillTabMic"
+                android:layout_width="56dp"
+                android:layout_height="56dp"
+                android:layout_gravity="center"
+                android:translationY="-8dp"
+                android:orientation="vertical"
+                android:gravity="center"
+                android:background="@drawable/bg_dock_mic_highlight">
+
+                <ImageView
+                    android:id="@+id/ivTabMic"
+                    android:layout_width="28dp"
+                    android:layout_height="28dp"
+                    android:src="@drawable/ic_mic_jarvis"
+                    app:tint="#FFFFFF"
+                    android:contentDescription="Voice" />
+
+                <TextView
+                    android:id="@+id/tvTabMic"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Voice"
+                    android:textSize="10sp"
+                    android:textStyle="bold"
+                    android:fontFamily="sans-serif-medium"
+                    android:includeFontPadding="false"
+                    android:textColor="#FFFFFF"
+                    android:visibility="gone" />
+            </LinearLayout>
+        </FrameLayout>
+
+        <!-- Tab 4: Settings -->
+        <FrameLayout
+            android:id="@+id/tabSettings"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:clickable="true"
+            android:focusable="true">
+
+            <LinearLayout
+                android:id="@+id/pillTabSettings"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:layout_gravity="center"
+                android:minWidth="52dp"
+                android:orientation="vertical"
+                android:gravity="center"
+                android:paddingHorizontal="10dp"
+                android:paddingVertical="3dp">
+
+                <ImageView
+                    android:id="@+id/ivTabSettings"
+                    android:layout_width="22dp"
+                    android:layout_height="22dp"
+                    android:src="@drawable/ic_nav_settings"
+                    app:tint="?attr/themeTextMuted"
+                    android:contentDescription="Settings" />
+
+                <TextView
+                    android:id="@+id/tvTabSettings"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Settings"
+                    android:textSize="10sp"
+                    android:textStyle="bold"
+                    android:fontFamily="sans-serif-medium"
+                    android:includeFontPadding="false"
+                    android:layout_marginTop="2dp"
+                    android:textColor="?attr/themeTextMuted" />
+            </LinearLayout>
+        </FrameLayout>
+
+        <!-- Tab 5: Updates -->
+        <FrameLayout
+            android:id="@+id/tabUpdates"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:clickable="true"
+            android:focusable="true">
+
+            <LinearLayout
+                android:id="@+id/pillTabUpdates"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:layout_gravity="center"
+                android:minWidth="52dp"
+                android:orientation="vertical"
+                android:gravity="center"
+                android:paddingHorizontal="10dp"
+                android:paddingVertical="3dp">
+
+                <FrameLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content">
+
+                    <ImageView
+                        android:id="@+id/ivTabUpdates"
+                        android:layout_width="22dp"
+                        android:layout_height="22dp"
+                        android:src="@drawable/ic_nav_bell"
+                        app:tint="?attr/themeTextMuted"
+                        android:contentDescription="Updates" />
+
+                    <View
+                        android:id="@+id/badgeUpdates"
+                        android:layout_width="6dp"
+                        android:layout_height="6dp"
+                        android:layout_gravity="top|end"
+                        android:background="@drawable/bg_jarvis_mic_center"
+                        android:backgroundTint="@color/status_red" />
+                </FrameLayout>
+
+                <TextView
+                    android:id="@+id/tvTabUpdates"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Updates"
+                    android:textSize="10sp"
+                    android:textStyle="bold"
+                    android:fontFamily="sans-serif-medium"
+                    android:includeFontPadding="false"
+                    android:layout_marginTop="2dp"
+                    android:textColor="?attr/themeTextMuted" />
+            </LinearLayout>
+        </FrameLayout>
+
+    </LinearLayout>
+
+    <!-- Glowing Liquid Glass Curved Line arching over the center Mic button -->
+    <com.jarvis.assistant.ui.widget.CurvedDockLineView
+        android:id="@+id/dockCurvedLine"
+        android:layout_width="0dp"
+        android:layout_height="24dp"
+        android:elevation="14dp"
+        app:layout_constraintStart_toStartOf="@id/bottomDock"
+        app:layout_constraintEnd_toEndOf="@id/bottomDock"
+        app:layout_constraintTop_toTopOf="@id/bottomDock"
+        android:layout_marginTop="-21dp" />
+
+</androidx.constraintlayout.widget.ConstraintLayout>

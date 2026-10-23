@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Central Theme Tokens -->
+    <attr name="themeBg" format="color|reference" />
+    <attr name="themeSurface" format="color|reference" />
+    <attr name="themeCardBg" format="color|reference" />
+    <attr name="themeCardBorder" format="color|reference" />
+    <attr name="themeTextPrimary" format="color|reference" />
+    <attr name="themeTextSecondary" format="color|reference" />
+    <attr name="themeTextMuted" format="color|reference" />
+    <attr name="themeAccent1" format="color|reference" />
+    <attr name="themeAccent2" format="color|reference" />
+    <attr name="themeAccent3" format="color|reference" />
+    <attr name="themeAccent" format="color|reference" />
+    <attr name="themeAccentLight" format="color|reference" />
+    <attr name="themeDockBg" format="color|reference" />
+    <attr name="themeDockBorder" format="color|reference" />
+    <attr name="themeChipBg" format="color|reference" />
+    <attr name="themeInputBg" format="color|reference" />
+
+    <!-- Liquid Glass Specular & Gradient Tokens -->
+    <attr name="themeCardGlassStart" format="color|reference" />
+    <attr name="themeCardGlassEnd" format="color|reference" />
+    <attr name="themeDockGlassStart" format="color|reference" />
+    <attr name="themeDockGlassEnd" format="color|reference" />
+    <attr name="themeGlassSpecular" format="color|reference" />
+    <attr name="themeGlowBlob1" format="reference" />
+    <attr name="themeGlowBlob2" format="reference" />
+    <attr name="themeGlowBlob3" format="reference" />
+</resources>

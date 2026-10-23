@@ -1,0 +1,498 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="?attr/themeBg"
+    android:clipChildren="false"
+    android:clipToPadding="false"
+    android:paddingStart="20dp"
+    android:paddingEnd="20dp"
+    android:paddingTop="16dp"
+    android:paddingBottom="96dp">
+
+    <!-- Ambient Liquid Glass Glow Fields (Soft luminous refractions behind glass) -->
+    <View
+        android:id="@+id/glowOrbTopRight"
+        android:layout_width="280dp"
+        android:layout_height="280dp"
+        android:layout_marginTop="-70dp"
+        android:layout_marginEnd="-70dp"
+        android:background="?attr/themeGlowBlob1"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <View
+        android:id="@+id/glowOrbCenterLeft"
+        android:layout_width="260dp"
+        android:layout_height="260dp"
+        android:layout_marginStart="-80dp"
+        android:background="?attr/themeGlowBlob2"
+        app:layout_constraintTop_toTopOf="@id/orbContainer"
+        app:layout_constraintBottom_toBottomOf="@id/orbContainer"
+        app:layout_constraintStart_toStartOf="parent" />
+
+    <View
+        android:id="@+id/glowOrbBottom"
+        android:layout_width="280dp"
+        android:layout_height="280dp"
+        android:layout_marginBottom="-60dp"
+        android:layout_marginEnd="-40dp"
+        android:background="?attr/themeGlowBlob3"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <!-- Top Action Bar -->
+    <ImageButton
+        android:id="@+id/btnTopChat"
+        android:layout_width="46dp"
+        android:layout_height="46dp"
+        android:background="@drawable/bg_jarvis_icon_square"
+        android:src="@drawable/ic_chat_bubble"
+        app:tint="?attr/themeTextPrimary"
+        android:contentDescription="Chat"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent" />
+
+    <LinearLayout
+        android:id="@+id/layoutTitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:gravity="center"
+        app:layout_constraintTop_toTopOf="@id/btnTopChat"
+        app:layout_constraintBottom_toBottomOf="@id/btnTopChat"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <ImageView
+            android:id="@+id/ivHeaderJarvisLogo"
+            android:layout_width="110dp"
+            android:layout_height="34dp"
+            android:src="@drawable/ic_jarvis_logo"
+            android:scaleType="fitCenter"
+            android:contentDescription="Jarvis Logo" />
+
+        <TextView
+            android:id="@+id/tvGreeting"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Welcome, Rehaan"
+            android:textColor="?attr/themeTextPrimary"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:fontFamily="sans-serif-medium"
+            android:layout_marginTop="2dp" />
+    </LinearLayout>
+
+    <ImageButton
+        android:id="@+id/btnTopSettings"
+        android:layout_width="46dp"
+        android:layout_height="46dp"
+        android:background="@drawable/bg_jarvis_icon_square"
+        android:src="@drawable/ic_nav_settings"
+        app:tint="?attr/themeTextPrimary"
+        android:contentDescription="Settings"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <!-- Center 3D Glowing Particle Orb Stage -->
+    <FrameLayout
+        android:id="@+id/orbContainer"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:clipChildren="false"
+        android:clipToPadding="false"
+        app:layout_constraintHeight_percent="0.45"
+        app:layout_constraintVertical_bias="0.45"
+        app:layout_constraintTop_toBottomOf="@id/layoutTitle"
+        app:layout_constraintBottom_toTopOf="@id/layoutStatusIndicator"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <View
+            android:id="@+id/orbHaloRing"
+            android:layout_width="260dp"
+            android:layout_height="260dp"
+            android:layout_gravity="center"
+            android:background="@drawable/bg_jarvis_orb_halo" />
+
+        <WebView
+            android:id="@+id/orbWebView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:layout_gravity="center"
+            android:background="@android:color/transparent" />
+    </FrameLayout>
+
+    <!-- Sleek Futuristic Status Pill -->
+    <LinearLayout
+        android:id="@+id/layoutStatusIndicator"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:layout_marginBottom="22dp"
+        app:layout_constraintBottom_toTopOf="@id/cardWeather"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="@drawable/bg_jarvis_status_badge"
+            android:paddingHorizontal="16dp"
+            android:paddingVertical="8dp">
+
+            <View
+                android:id="@+id/dotStatusGlow"
+                android:layout_width="8dp"
+                android:layout_height="8dp"
+                android:background="@drawable/bg_jarvis_mic_center"
+                android:backgroundTint="?attr/themeAccent" />
+
+            <TextView
+                android:id="@+id/tvListeningStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="TAP ORB TO START"
+                android:textColor="?attr/themeTextPrimary"
+                android:textSize="12sp"
+                android:letterSpacing="0.10"
+                android:textStyle="bold"
+                android:fontFamily="sans-serif-medium"
+                android:layout_marginStart="8dp" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/tvHoldHint"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Hold button or orb to power off"
+            android:textColor="?attr/themeTextMuted"
+            android:textSize="10sp"
+            android:fontFamily="sans-serif"
+            android:layout_marginTop="5dp" />
+    </LinearLayout>
+
+    <!-- Weather Widget Card -->
+    <LinearLayout
+        android:id="@+id/cardWeather"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="@drawable/bg_jarvis_action_card"
+        android:paddingStart="20dp"
+        android:paddingEnd="20dp"
+        android:paddingTop="16dp"
+        android:paddingBottom="16dp"
+        android:clickable="true"
+        android:focusable="true"
+        android:layout_marginBottom="24dp"
+        app:layout_constraintBottom_toTopOf="@id/layoutActionGrid"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <TextView
+            android:id="@+id/tvTemperature"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="--°C"
+            android:textColor="?attr/themeTextPrimary"
+            android:textSize="26sp"
+            android:fontFamily="sans-serif-medium"
+            android:textStyle="bold"
+            android:includeFontPadding="false"
+            android:layout_marginEnd="14dp" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/tvWeatherCondition"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Detecting Location&#8230;"
+                android:textColor="?attr/themeTextPrimary"
+                android:textSize="14sp"
+                android:fontFamily="sans-serif-medium"
+                android:textStyle="bold"
+                android:includeFontPadding="false" />
+
+            <TextView
+                android:id="@+id/tvWeatherDetails"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Tap to refresh live atmosphere"
+                android:textColor="?attr/themeTextMuted"
+                android:textSize="12sp"
+                android:fontFamily="sans-serif"
+                android:includeFontPadding="false"
+                android:layout_marginTop="2dp" />
+        </LinearLayout>
+
+        <ImageView
+            android:id="@+id/ivWeatherIcon"
+            android:layout_width="30dp"
+            android:layout_height="30dp"
+            android:src="@drawable/ic_weather_sun"
+            app:tint="?attr/themeAccent"
+            android:contentDescription="Weather"
+            android:layout_marginStart="8dp" />
+    </LinearLayout>
+
+    <!-- Quick Action Grid (3 Modern High-Tech Cards) -->
+    <LinearLayout
+        android:id="@+id/layoutActionGrid"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginBottom="12dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <!-- 1. Screen Share -->
+        <LinearLayout
+            android:id="@+id/btnScreenShareQuick"
+            android:layout_width="0dp"
+            android:layout_height="66dp"
+            android:layout_weight="1"
+            android:layout_marginEnd="6dp"
+            android:background="@drawable/bg_jarvis_action_card"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingStart="10dp"
+            android:paddingEnd="6dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:contentDescription="Start or stop screen sharing">
+
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_screen_share"
+                app:tint="?attr/themeAccent"
+                android:layout_marginEnd="8dp" />
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Screen"
+                    android:textColor="?attr/themeTextPrimary"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:fontFamily="sans-serif-medium"
+                    android:includeFontPadding="false" />
+
+                <TextView
+                    android:id="@+id/tvQuickScreenShareStatus"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Share"
+                    android:textColor="?attr/themeTextMuted"
+                    android:textSize="10sp"
+                    android:fontFamily="sans-serif"
+                    android:includeFontPadding="false"
+                    android:layout_marginTop="2dp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- 2. Saved Memories -->
+        <LinearLayout
+            android:id="@+id/btnSavedMemories"
+            android:layout_width="0dp"
+            android:layout_height="66dp"
+            android:layout_weight="1"
+            android:layout_marginStart="6dp"
+            android:layout_marginEnd="6dp"
+            android:background="@drawable/bg_jarvis_action_card"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingStart="10dp"
+            android:paddingEnd="6dp"
+            android:clickable="true"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:src="@drawable/ic_stack_memory"
+                app:tint="?attr/themeAccent"
+                android:layout_marginEnd="6dp" />
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Memories"
+                    android:textColor="?attr/themeTextPrimary"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:fontFamily="sans-serif-medium"
+                    android:includeFontPadding="false" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Recall Core"
+                    android:textColor="?attr/themeTextMuted"
+                    android:textSize="10sp"
+                    android:fontFamily="sans-serif"
+                    android:includeFontPadding="false"
+                    android:layout_marginTop="2dp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- 3. Conversation Language -->
+        <LinearLayout
+            android:id="@+id/btnConversationLanguageQuick"
+            android:layout_width="0dp"
+            android:layout_height="66dp"
+            android:layout_weight="1"
+            android:layout_marginStart="6dp"
+            android:background="@drawable/bg_jarvis_action_card"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingStart="10dp"
+            android:paddingEnd="6dp"
+            android:clickable="true"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:src="@drawable/ic_settings_language"
+                app:tint="?attr/themeAccent"
+                android:layout_marginEnd="6dp" />
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Language"
+                    android:textColor="?attr/themeTextPrimary"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:fontFamily="sans-serif-medium"
+                    android:includeFontPadding="false" />
+
+                <TextView
+                    android:id="@+id/tvQuickLanguageStatus"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Auto"
+                    android:textColor="?attr/themeTextMuted"
+                    android:textSize="10sp"
+                    android:fontFamily="sans-serif"
+                    android:singleLine="true"
+                    android:maxLines="1"
+                    android:ellipsize="end"
+                    android:includeFontPadding="false"
+                    android:layout_marginTop="2dp" />
+            </LinearLayout>
+        </LinearLayout>
+
+    </LinearLayout>
+
+    <!-- Prominent Actionable Error Card Overlay (Floats Upon Orb) -->
+    <LinearLayout
+        android:id="@+id/cardLiveError"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@drawable/bg_jarvis_error_card"
+        android:padding="20dp"
+        android:layout_marginStart="24dp"
+        android:layout_marginEnd="24dp"
+        android:elevation="32dp"
+        android:translationZ="32dp"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone"
+        app:layout_constraintTop_toTopOf="@id/orbContainer"
+        app:layout_constraintBottom_toBottomOf="@id/orbContainer"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <ImageView
+                android:id="@+id/ivLiveErrorIcon"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_warning"
+                app:tint="#EF4444" />
+
+            <TextView
+                android:id="@+id/tvLiveErrorTitle"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="10dp"
+                android:text="API KEY ERROR"
+                android:textColor="#EF4444"
+                android:textSize="14sp"
+                android:letterSpacing="0.08"
+                android:fontFamily="sans-serif-medium"
+                android:textStyle="bold" />
+
+            <ImageButton
+                android:id="@+id/btnDismissLiveError"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_close"
+                app:tint="?attr/themeTextMuted"
+                android:contentDescription="Dismiss" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/tvLiveErrorMessage"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:text="Google rejected the API key: 400 Bad Request. Please update your API key in Settings."
+            android:textColor="?attr/themeTextPrimary"
+            android:textSize="13sp"
+            android:lineSpacingExtra="3dp" />
+
+        <Button
+            android:id="@+id/btnFixLiveError"
+            android:layout_width="wrap_content"
+            android:layout_height="40dp"
+            android:layout_marginTop="14dp"
+            android:paddingHorizontal="20dp"
+            android:text="OPEN API SETTINGS"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:background="@drawable/bg_jarvis_pill_button"
+            app:backgroundTint="@null"
+            android:textColor="#FFFFFF" />
+    </LinearLayout>
+
+</androidx.constraintlayout.widget.ConstraintLayout>
