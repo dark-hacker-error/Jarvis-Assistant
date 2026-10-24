@@ -1,145 +1,191 @@
-# Jarvis Assistant — Architecture Overview
+# Architecture Overview
 
-Jarvis is a single-module Android app (`com.jarvis.assistant`) that combines a
-Gemini Live voice/text assistant, on-device wake-word detection, and an
-accessibility-driven task automation engine.
+JARVIS is a single-module Android application (`:app`, `com.jarvis.assistant`)
+that combines four systems that are usually separate apps:
 
-## Runtime at a glance
+1. a **real-time voice assistant** over the Gemini Live API (WebSocket, PCM in,
+   PCM out),
+2. a **screen automation agent** driven by AccessibilityService plus optional
+   MediaProjection screen frames,
+3. a **privileged device-control layer** through Shizuku, and
+4. a **tool platform** that exposes 22 native Gemini functions and 24 built-in
+   MCP tools (plus user-added MCP servers).
+
+There is no server component. The only network dependencies are the Gemini
+Live endpoint, an optional custom MCP server, the Open-Meteo weather API, and an
+optional YouTube Data API key.
+
+## Design principles visible in the code
+
+| Principle | How it is implemented |
+| --- | --- |
+| The conversation must survive UI death | `JarvisConversationService` is a foreground service that owns mic, player, socket and timers. Activities only observe `StateFlow`s. |
+| One microphone owner | `AudioCaptureBus` is a singleton `AudioRecord` shared by the wake-word spotter and the conversation recorder. Wake hand-off keeps the mic open. |
+| Model proposes, code verifies | Every UI mutation goes through `AgentTaskEngine` → `SerializedActionExecutor`; results carry `verified` flags and are re-observed. |
+| Dangerous actions need a local "yes" | `McpManager` never executes `CONFIRM`/`DANGEROUS` tools without `executeConfirmed()`; the pending action lives in the service with a 2-minute expiry. |
+| Degrade without optional privileges | Missing Shizuku, accessibility or overlay permission disables only that capability; voice and chat keep working. |
+| Prompt is built from state | `PromptGenerator` + `McpManager.buildPromptContext()` compose the system instruction at session start from preferences, memory and enabled tools. |
+
+## Runtime topology
 
 ```mermaid
-flowchart LR
-    UI[MainActivity / Fragments] -->|typed text| SVC[JarvisConversationService]
-    UI -->|start / stop / standby| SVC
-    WAKE[Sherpa-ONNX KWS] -->|wake + pre-roll| BUS[AudioCaptureBus]
-    BUS --> MIC[AudioRecorder 16 kHz PCM]
-    MIC -->|20 ms chunks| WS[GeminiLiveWebSocket]
-    WS -->|24 kHz PCM| SPK[AudioPlayer]
-    WS -->|transcripts + tool calls| SVC
-    SVC -->|tool calls| CMD[CommandExecutor]
-    CMD --> AGENT[AgentTaskEngine]
-    AGENT --> A11Y[JarvisAccessibilityService]
-    AGENT --> APPS[WhatsApp / Phone / YouTube]
-    SCREEN[ScreenCaptureManager] -->|JPEG frames| WS
-    SVC --> DATA[(Room memory + SharedPreferences)]
-    SVC --> NOTIF[Foreground notification]
-    SVC --> MCP[McpManager]
-    MCP --> BUILTIN[Built-in MCP executor]
-    MCP --> HTTP[Custom MCP HTTP client]
-    BUILTIN --> SHIZUKU[ShizukuManager]
-    SHIZUKU --> USERSVC[JarvisShellService<br/>Shizuku UserService]
+flowchart TB
+    subgraph UI["UI process (default)"]
+        MA[MainActivity]
+        HF[HomeFragment]
+        VM[MainViewModel]
+        CH[ChatFragment]
+        SET[Settings screens]
+        OV[TaskProgressOverlay]
+    end
+
+    subgraph SVC["JarvisConversationService (foreground)"]
+        REC[AudioRecorder]
+        BUS[(AudioCaptureBus)]
+        PLAY[AudioPlayer]
+        WS[GeminiLiveWebSocket]
+        TOOLS[Tool dispatcher]
+        TTS[TextToSpeech]
+    end
+
+    subgraph AUTO["Automation"]
+        CMD[CommandParser / CommandExecutor]
+        AG[AgentTaskEngine]
+        VTO[VisualTaskOrchestrator]
+        A11Y[JarvisAccessibilityService]
+        PHONE[PhoneControlManager]
+        WA[WhatsAppAssistant]
+        YT[YouTubeAutomationManager]
+    end
+
+    subgraph VISION["Vision"]
+        SCM[ScreenCaptureManager]
+        UGE[UiGroundingEngine]
+    end
+
+    subgraph PRIV["Privileged"]
+        MCP[McpManager]
+        SHZ[ShizukuManager]
+        SHELL[JarvisShellService<br/>Shizuku UserService]
+    end
+
+    subgraph DATA["Persistence"]
+        PREFS[(SharedPreferences<br/>+ EncryptedSharedPreferences)]
+        ROOM[(Room memory DB)]
+    end
+
+    MA --> SVC
+    HF --> VM
+    VM -->|sendTextMessage / start / stop| SVC
+    CH --> VM
+    SET --> PREFS
+
+    KWS[SherpaOnnxWakeWordEngine] -->|10 ms frames| BUS
+    BUS --> REC
+    REC -->|20 ms PCM16 16 kHz| WS
+    WS -->|24 kHz PCM| PLAY
+    WS -->|transcripts, tool calls| TOOLS
+    TOOLS --> CMD
+    TOOLS --> AG
+    TOOLS --> MCP
+    AG --> VTO
+    VTO --> A11Y
+    CMD --> PHONE
+    CMD --> WA
+    CMD --> YT
+    A11Y -->|UI tree, gestures| ANDROID[(Android UI)]
+    SCM -->|JPEG 1 fps| WS
+    A11Y -->|screenshot| SCM
+    MCP --> SHZ --> SHELL --> ANDROID
+    SVC --> PREFS
+    SVC --> ROOM
+    SVC --> OV
 ```
 
-## Main components
+## Component responsibilities
 
-| Area | Key classes | Responsibility |
+| Component | File | Responsibility |
 | --- | --- | --- |
-| App container | `JarvisApp` | Creates preferences, repositories, memory, automation managers, and the app coroutine scope. |
-| Conversation service | `JarvisConversationService` | Foreground service that owns the Live session, audio pipeline, wake lock, notifications, typed-chat queue, and automation dispatch. |
-| Gemini transport | `GeminiLiveWebSocket` | OkHttp WebSocket client for `BidiGenerateContent`; setup payload, audio/video frames, transcripts, tool calls, session renewal, reconnect backoff. |
-| Audio input | `AudioCaptureBus`, `AudioRecorder`, `AudioUtils`, `HeadsetAudioRouter` | One shared 16 kHz PCM capture owner for Sherpa-ONNX KWS and the conversation pipeline, with AEC/NS/AGC, wake pre-roll hand-off, amplitude/frequency data, and Bluetooth/wired routing. |
-| Audio output | `AudioPlayer` | Queues PCM chunks on an `AudioTrack`, drives amplitude callbacks, signals turn completion. |
-| Chat UI | `ChatFragment`, `JarvisChatAdapter`, `ChatRepository` | Typed messages, transcript bubbles, history persistence. |
-| Home UI | `MainActivity`, `HomeFragment`, `JarvisOrbView` | Navigation, orb, status cards, task fallback panel. |
-| Settings | `SettingsActivity` and settings screens | API key/model/voice/persona/theme/permissions configuration. |
-| Memory | `MemoryDatabase`, `MemoryRepository`, `MemoryManager` | Local Room-backed facts, short-term turns, owner voice profile metadata. |
-| Automation | `CommandExecutor`, `AgentTaskEngine`, `JarvisAccessibilityService` | Tool-call execution, multi-step task planning/verification, UI actions. |
-| App automations | `WhatsAppAssistant`, `PhoneControlManager`, `YouTubeAutomationManager` | WhatsApp messaging/calls, phone intents, YouTube search/playback. |
-| Vision | `ScreenCaptureManager`, `VisualTaskOrchestrator`, `GroundingEngine` | MediaProjection frame capture, JPEG streaming, on-demand verification snapshots. |
-| Security | `SecurityManager`, `AppIdentityVerifier` | Package/signature checks, release certificate pinning. |
-| Shizuku | `ShizukuManager`, `JarvisShellService`, `IJarvisShellService` | Permission/binding lifecycle and a privileged UserService shell with capped output and timeouts. |
-| MCP | `McpManager`, `BuiltInMcpRegistry`, `BuiltInMcpExecutor`, `McpHttpClient`, `McpPreferences` | Built-in/custom tool catalogue, encrypted custom-server storage, risk gate, HTTP JSON-RPC transport, prompt context. |
+| App container | `JarvisApp.kt` | Builds and owns the singletons: preferences, chat repository, Room memory, automation managers, Shizuku, MCP. Applies theme on every activity. Tracks foreground state. |
+| Conversation service | `background/JarvisConversationService.kt` | The heart of the app. Owns the Live socket, audio pipeline, wake lock, notification, inactivity timer, tool dispatch, MCP confirmation, TTS, and overlay lifecycle. ~3.5k lines. |
+| Live transport | `network/GeminiLiveWebSocket.kt` | OkHttp WebSocket for `BidiGenerateContent`. Builds the setup payload and all 22 function declarations, streams audio/video, parses server events, renews the session every 9 minutes, reconnects with exponential backoff, falls back to a second model once. |
+| Prompt builder | `util/PromptGenerator.kt` | Composes the persona, language mandate, safety and task-execution rules, device state and memory context into the system instruction. |
+| Shared mic | `audio/AudioCaptureBus.kt` | Single `AudioRecord` at 16 kHz mono PCM16, `VOICE_COMMUNICATION` source, platform AEC/NS/AGC. Provides 20 ms frames to listeners, 2 s rolling pre-roll, 3.5 s wake hand-off lease (5 s hard cap). |
+| Wake word | `voice/SherpaOnnxWakeWordEngine.kt` | Sherpa-ONNX int8 zipformer keyword spotter on 10 ms slices. Triggers the floating orb/session, pauses itself, and hands the microphone over without a gap. |
+| Recorder / player | `audio/AudioRecorder.kt`, `audio/AudioPlayer.kt` | Attach to the bus, emit 20 ms chunks, amplitude/frequency analysis; queue 24 kHz PCM on `AudioTrack`, signal turn completion. |
+| Chat UI | `ui/home/*`, `ui/chat/*`, `data/repository/ChatRepository.kt` | Orb, status cards, typed chat, persisted history (max 100 turns), `StateFlow` observation of the service. |
+| Memory | `data/memory/*` | Room-backed long-term facts with categories; 30-turn short-term window; keyword extraction from conversation. |
+| Automation orchestration | `automation/agent/AgentTaskEngine.kt` | Authoritative task state machine, plan, evidence, cancellation, pause/resume, and the single gate for UI mutations. |
+| UI action engine | `vision/VisualTaskOrchestrator.kt` | Resolves and performs click/type/scroll/key actions, waits for UI stability, verifies text entry, inspects the screen tree. |
+| Accessibility | `automation/accessibility/JarvisAccessibilityService.kt` | Reads the node tree, dispatches gestures, takes screenshots, and contains app-specific flows for WhatsApp and YouTube. |
+| Deterministic commands | `automation/command/*` | Regex/keyword parser and executor used as a fallback when the model does not call a tool, and for local yes/no confirmation handling. |
+| Device control | `automation/phone/PhoneControlManager.kt` | Calls, SMS, alarms, volume, brightness, torch, app launch, URLs, web search. |
+| App automations | `automation/whatsapp/*`, `automation/youtube/*` | Contact disambiguation, draft/send, calls, message delete; YouTube search/play/subscribe/fullscreen. |
+| Vision | `vision/ScreenCaptureManager.kt`, `vision/UiGroundingEngine.kt` | MediaProjection → ImageReader → JPEG at ≤768 px, ~1 fps streaming; element grounding with stable IDs and bounds. |
+| MCP | `mcp/*` | Catalogue, risk gate, encrypted custom-server storage, Streamable-HTTP JSON-RPC client, prompt context. |
+| Privileged shell | `system/ShizukuManager.kt`, `system/JarvisShellService.kt`, `aidl/IJarvisShellService.aidl` | Shizuku permission/binding and a UserService that runs shell commands with caps. |
+| Security | `security/*` | Package-name check, release certificate pin, developer identity constants. |
 
-## Voice turn lifecycle
+## State ownership
 
-1. `MainActivity` starts `JarvisConversationService`; the service acquires a
-   partial wake lock and Wi-Fi lock and shows its foreground notification.
-2. `AudioRecorder` streams 640-byte (20 ms) PCM chunks. Chunks are buffered until
-   the WebSocket reports `LIVE`, then flushed.
-3. `GeminiLiveWebSocket` sends `realtimeInput` audio. Assistant audio returns as
-   PCM chunks and is queued in `AudioPlayer`.
-4. Assistant transcript chunks accumulate in `currentTurnAssistantText`; user
-   input transcription accumulates in `currentTurnUserText`.
-5. `onTurnCompleted` performs command fallback and memory learning. When audio
-   playback finishes (or the session is stopped), `finalizeTurn()` writes one
-   chat turn and one short-term memory entry.
+All conversation state lives in the service's companion object and is exposed
+read-only:
 
-## Typed chat path
+| Flow | Type | Meaning |
+| --- | --- | --- |
+| `isSessionOn` | `StateFlow<Boolean>` | A Live session is active (not necessarily connected). |
+| `isStandby` | `StateFlow<Boolean>` | Wake-word standby after `go_to_background` or inactivity. |
+| `conversationState` | `StateFlow<ConversationState>` | `IDLE`, `LISTENING`, `THINKING`, `SPEAKING`, … |
+| `connectionStatus` | `StateFlow<String>` | Human-readable socket status (`READY`, `CONNECTING`, `LIVE`, errors). |
+| `liveError` | `StateFlow<JarvisLiveError?>` | Typed error with code and an action label for the UI. |
+| `audioLevel`, `audioFrequency` | `StateFlow` | Drives the orb animation. |
+| `liveUserTranscript`, `liveAssistantResponse` | `StateFlow<String>` | Streaming captions. |
+| `events`, `wakeEvents` | `SharedFlow` | One-off UI events (toasts, wake acknowledgements). |
 
-Typed messages use the same Live session but a separate bookkeeping path:
+The Activity never owns the socket, recorder or player. Removing the app from
+Recents does not stop the conversation; `stopWithTask="false"` and the
+foreground service keep it alive.
 
-- `JarvisConversationService.sendTextMessage()` queues text in
-  `pendingTypedText`. If the service is still starting, the message is also
-  shown immediately through `ChatRepository.beginTurn()`.
-- When the socket reaches `LIVE`, `flushTypedMessages()` sends queued messages in
-  order. Failed sends remain queued for the next `LIVE` transition.
-- Each sent message is tracked in `typedTurnsAwaitingReply`. When its reply is
-  finalized, `completeLastTurn()` attaches the reply to the existing user bubble
-  instead of creating a duplicate “Spoken user query” turn.
-- If no matching bubble exists, the service falls back to `addTurn()` so a reply
-  is never lost.
+## Threading model
 
-## Session resilience
+| Work | Thread / dispatcher |
+| --- | --- |
+| UI | Main thread |
+| Audio capture | Dedicated `AudioCaptureBus` worker thread |
+| Audio playback | `AudioTrack` write loop on its own thread |
+| WebSocket callbacks | OkHttp dispatcher; results are marshalled to coroutines |
+| Tool execution | `serviceScope` (`SupervisorJob + Dispatchers.Default`) with `Dispatchers.IO` for blocking work, serialized by `toolExecutionMutex` |
+| Screen capture | `HandlerThread("JarvisScreenCaptureThread")` |
+| Room / prefs | `Dispatchers.IO` |
+| Wake-word inference | `Dispatchers.Default` for model load; inference on the audio bus thread |
 
-- `sendClientContent()` returns `false` when the socket is not ready, allowing
-  the service to keep messages queued.
-- Reconnects use exponential backoff: 500 ms, 1 s, 2 s, 4 s, 8 s, 16 s, capped
-  at 30 s. `stopTimers()` cancels pending reconnect work on an explicit stop.
-- Sessions are proactively renewed after ~9 minutes. On model-related HTTP
-  400/404 failures, the client switches once to `models/gemini-3.8-live`.
-- HTTP 400 is no longer treated as “invalid API key”; only explicit key markers
-  or 401/403 produce `API_KEY_INVALID`. The real server reason is surfaced.
+## Resilience behaviour
 
-## Automation path
+- **Reconnect:** 500 ms → 1 s → 2 s → 4 s → 8 s → 16 s → 30 s cap.
+- **Session renewal:** proactive at ~9 minutes to avoid server-side limits.
+- **Model fallback:** one switch to `models/gemini-3.8-live` on model-related
+  400/404 responses.
+- **Audio buffering:** chunks are held until the socket reports `LIVE`, then
+  flushed in order.
+- **Typed messages:** queued in `pendingTypedText` and re-sent on the next
+  `LIVE` transition; never silently dropped.
+- **Tool timeouts:** per-tool timeouts (`automationToolTimeoutMs`), 400-step
+  ceiling for bulk tasks, hard stop after repeated failures.
+- **Wake hand-off:** 2 s pre-roll + up to 3.5 s lease so the first word after
+  "Jarvis" is not lost.
 
-Gemini tool calls arrive as `onToolCall`. `JarvisConversationService` validates
-owner verification, dispatches through `CommandExecutor`, and reports results
-back to the Live session. Multi-step tasks run in `AgentTaskEngine`, which asks
-`JarvisAccessibilityService` to inspect and act on the current screen, records
-step evidence, and requires verification before marking a task complete. A
-floating `TaskProgressOverlay` shows progress when the app is in the background;
-`HomeFragment` shows an in-app fallback when overlay permission is unavailable.
+## Non-goals
 
-## Shizuku and MCP path
-
-The user enables individual built-in MCP servers or adds a custom Streamable
-HTTP MCP endpoint in settings. `McpManager.buildPromptContext()` injects only the
-enabled tool catalogue into the Gemini system prompt. Gemini calls the generic
-`execute_mcp_tool` function; `McpManager` re-resolves the exact tool, validates
-arguments, checks Shizuku permission when required, and blocks every non-SAFE
-tool behind a local confirmation.
-
-Built-in tools execute in-process or through `ShizukuManager`. Shizuku binds
-`JarvisShellService` as a UserService in its privileged process; the AIDL
-contract exposes `runCommand` and the reserved `destroy` transaction. Custom
-tools use `McpHttpClient` (`initialize`, `notifications/initialized`,
-`tools/list`, `tools/call`) with JSON/SSE response parsing and no automatic
-redirects.
-
-A pending confirmation is held in `JarvisConversationService` with a two-minute
-expiry. Only the local yes/no command path calls `executeConfirmed()`; a new
-tool call cannot replace a different pending action, and unrelated speech or a
-stop command clears it.
-
-## Vision path
-
-`ScreenCaptureManager` obtains a `MediaProjection`, mirrors the display into an
-`ImageReader`, converts frames to JPEG, and forwards them to Gemini. Streaming is
-throttled; high-resolution snapshots are produced on demand. Bitmap access and
-compression are guarded by `bitmapLock`.
-
-## Persistence and configuration
-
-- Room (`MemoryDatabase`) stores long-term memory; `MemoryManager` combines it
-  with recent turns.
-- `AppPreferences` stores settings in `SharedPreferences`. The Gemini API key is
-  stored in `EncryptedSharedPreferences` when available, with a guarded
-  plaintext fallback on devices where the Android Keystore cannot initialise.
-- Chat history is persisted by `ChatRepository` and exposed as a `StateFlow`.
+- No cloud backend, account system or telemetry.
+- No always-on server-side wake word; wake detection is on-device.
+- No Play Integrity or remote attestation; the identity screen reports remote
+  verification as unavailable.
+- No multi-user support; owner voice verification is optional and local.
 
 ## Related documents
 
 - [Module map](module-map.md)
-- [Build and setup](../setup/build.md)
-- [Permissions and security](../security/permissions-and-security.md)
-- [Bug-fix log](../maintenance/bugfix-log.md)
-- [Voice architecture research](voice-architecture-research.md)
+- [Runtime flows](runtime-flows.md)
+- [Automation engine](automation-engine.md)
+- [Gemini tools](../reference/gemini-tools.md)
+- [MCP tools](../reference/mcp-tools.md)

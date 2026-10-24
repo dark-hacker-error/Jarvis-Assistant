@@ -46,8 +46,8 @@ $env:JARVIS_RELEASE_STORE_PASSWORD = '<local secret>'
 $env:JARVIS_RELEASE_KEY_ALIAS = 'jarvis-release'
 $env:JARVIS_RELEASE_KEY_PASSWORD = '<local secret>'
 $env:JARVIS_RELEASE_CERT_SHA256 = '<64 hex characters from keytool -list -v>'
-$env:JARVIS_DEVELOPER_NAME = 'TechGpt X'
-$env:JARVIS_COPYRIGHT_OWNER = 'TechGpt X'
+$env:JARVIS_DEVELOPER_NAME = 'Roshan Hacker'
+$env:JARVIS_COPYRIGHT_OWNER = 'Roshan Hacker'
 .\gradlew.bat :app:assembleRelease
 ```
 
@@ -59,31 +59,51 @@ The certificate fingerprint must be calculated from the same key used to sign th
 .
 ├── app/                         Android application module
 │   └── src/main/
+│       ├── aidl/                Shizuku UserService interface
 │       ├── java/com/jarvis/assistant/
-│       │   ├── audio/           Audio capture, playback, and voice handling
-│       │   ├── automation/      Accessibility, actions, and app integrations
+│       │   ├── audio/           Microphone bus, playback, voice biometrics
+│       │   ├── automation/      Accessibility, agent, commands, phone, WhatsApp, YouTube
 │       │   ├── background/      Conversation foreground service
-│       │   ├── data/            Preferences, persistence, and data models
+│       │   ├── data/            Preferences, Room memory, chat repository
+│       │   ├── mcp/             Built-in and custom MCP tools
 │       │   ├── network/         Gemini Live transport
-│       │   ├── ui/              Activities, fragments, and adapters
-│       │   ├── util/            Shared app utilities
-│       │   └── vision/          Screen capture and visual task execution
+│       │   ├── security/        Package and signature checks
+│       │   ├── system/          Shizuku manager and privileged shell
+│       │   ├── ui/              Activities, fragments, overlays
+│       │   ├── util/            Prompt builder and shared helpers
+│       │   ├── vision/          Screen capture, UI grounding, visual actions
+│       │   └── voice/           Wake word, orb, VoiceInteraction session
 │       ├── assets/              Bundled web UI and offline voice models
 │       └── res/                 Android layouts, drawables, values, and config
 ├── docs/
-│   ├── architecture/            Design notes and research
+│   ├── architecture/            Overview, module map, runtime flows, automation
+│   ├── reference/               Gemini tools, MCP tools, settings and data
+│   ├── security/                Permissions and threat model
+│   ├── setup/                   Build, signing and troubleshooting
+│   ├── maintenance/             Code health, upgrade roadmap, bug-fix log
+│   ├── features/                Shizuku and MCP user guide
 │   └── diagnostics/             User-provided issue recordings and index
 ├── gradle/                      Gradle wrapper configuration
 ├── build.gradle.kts             Root Gradle plugin declarations
 ├── settings.gradle.kts          Project and repository configuration
-└── gradle.properties             Gradle runtime settings
+└── gradle.properties            Gradle runtime settings
 ```
 
 ## Documentation
 
-- [Documentation index](docs/README.md)
-- [Voice architecture research](docs/architecture/voice-architecture-research.md)
-- [Voice issue recordings](docs/diagnostics/voice-videos/README.md)
+Start with the [documentation index](docs/README.md). The most useful entry
+points:
+
+- [Architecture overview](docs/architecture/overview.md) — the system in ten minutes
+- [Module map](docs/architecture/module-map.md) — which file does what
+- [Runtime flows](docs/architecture/runtime-flows.md) — wake word, voice turn, tools, MCP
+- [Automation engine](docs/architecture/automation-engine.md) — how screen actions are verified
+- [Gemini tools](docs/reference/gemini-tools.md) and [MCP tools](docs/reference/mcp-tools.md)
+- [Build and setup](docs/setup/build.md) — JDK, SDK, signing, troubleshooting
+- [Threat model](docs/security/threat-model.md) and [permissions](docs/security/permissions-and-security.md)
+- [Code health](docs/maintenance/code-health.md) and [upgrade roadmap](docs/maintenance/upgrade-roadmap.md)
+- [Shizuku and MCP guide](docs/features/shizuku-and-mcp.md)
+- [Voice architecture research](docs/architecture/voice-architecture-research.md) and [voice issue recordings](docs/diagnostics/voice-videos/README.md)
 
 ## Configuration and privacy
 

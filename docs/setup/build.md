@@ -4,8 +4,8 @@
 
 | Tool | Version used by this project |
 | --- | --- |
-| JDK | 21 (Gradle runs on JDK 21; sources target Java 17) |
-| Android SDK | Platform 34, Build Tools 36.0.0 (pinned) |
+| JDK | 21 to run Gradle; sources and bytecode target Java 17 |
+| Android SDK | Platform 34 (platform 36 also installed), Build Tools **36.0.0** (pinned) |
 | Gradle | Wrapper 8.9 |
 | Android Gradle Plugin | 8.7.2 |
 | Kotlin | 2.0.20 (kapt falls back to language level 1.9) |
@@ -16,13 +16,16 @@ Set the SDK location in an untracked `local.properties`:
 sdk.dir=/path/to/Android/Sdk
 ```
 
-On this machine the working values are:
+On the reference aarch64 host:
 
 ```bash
 export JAVA_HOME=/opt/jdk-21.0.12.1+1
 export PATH="$JAVA_HOME/bin:$PATH"
 # local.properties already points at /opt/sdk
 ```
+
+> The default `java` on this host is 11. Gradle 8.9 requires 17+, so always set
+> `JAVA_HOME` explicitly or the build fails at configuration time.
 
 ## Debug build
 
@@ -31,7 +34,14 @@ cd /root/jarvis
 ./gradlew :app:assembleDebug --no-daemon
 ```
 
-Output: `app/build/outputs/apk/debug/app-debug.apk`.
+Output: `app/build/outputs/apk/debug/app-debug.apk` (≈230 MB because the Vosk
+and Sherpa model assets are bundled uncompressed).
+
+Install:
+
+```bash
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
 
 ## Unit tests
 
@@ -39,8 +49,12 @@ Output: `app/build/outputs/apk/debug/app-debug.apk`.
 ./gradlew :app:testDebugUnitTest --no-daemon
 ```
 
-Current suite: `AgentTaskEngineTest` (4 tests, all passing). Reports:
-`app/build/test-results/testDebugUnitTest/`.
+Current suite: `app/src/test/java/com/jarvis/assistant/automation/agent/AgentTaskEngineTest.kt`
+(4 tests). Reports: `app/build/test-results/testDebugUnitTest/`.
+
+There are no instrumented tests. Anything that needs AccessibilityService,
+Shizuku, MediaProjection or a real microphone must be verified manually on a
+device.
 
 ## Lint
 
@@ -49,13 +63,15 @@ Current suite: `AgentTaskEngineTest` (4 tests, all passing). Reports:
 ```
 
 HTML report: `app/build/reports/lint-results-debug.html`.
+
 The project disables only `NullSafeMutableLiveData` because that AndroidX
-Lifecycle detector crashes under Kotlin 2.0 UAST.
+Lifecycle 2.8.6 detector crashes under the Kotlin 2.0 UAST. Every other check is
+active.
 
 ## Release build and identity pinning
 
 Release packaging requires four signing values and a certificate fingerprint.
-Provide them as Gradle properties or environment variables:
+Provide them as Gradle properties (`-P`) or environment variables:
 
 | Property | Purpose |
 | --- | --- |
@@ -63,36 +79,53 @@ Provide them as Gradle properties or environment variables:
 | `JARVIS_RELEASE_STORE_PASSWORD` | Keystore password. |
 | `JARVIS_RELEASE_KEY_ALIAS` | Release key alias. |
 | `JARVIS_RELEASE_KEY_PASSWORD` | Key password. |
-| `JARVIS_RELEASE_CERT_SHA256` | 64-hex-character SHA-256 of the signing certificate. |
-| `JARVIS_DEVELOPER_NAME` | Publisher name embedded in BuildConfig (default `Tech GPTx`). |
-| `JARVIS_COPYRIGHT_OWNER` | Copyright owner embedded in BuildConfig. |
+| `JARVIS_RELEASE_CERT_SHA256` | 64-hex-character SHA-256 of the signing certificate (colons allowed). |
+| `JARVIS_DEVELOPER_NAME` | Publisher name embedded in BuildConfig (default `Roshan Hacker`). |
+| `JARVIS_COPYRIGHT_OWNER` | Copyright owner embedded in BuildConfig (default `Roshan Hacker`). |
 | `JARVIS_VERIFICATION_ENDPOINT` | Optional remote verification endpoint embedded in BuildConfig. |
 
 `verifyReleaseSecurityInputs` runs before `packageRelease` and fails the build
-when signing or the certificate pin is missing. `AppIdentityVerifier` also
-refuses to start the conversation service in a release build without a valid
-pin. Debug builds are intentionally exempt from the release pin because they use
-the local debug key.
+when signing, the certificate pin, or the publisher identity is missing.
 
 ```bash
+export JARVIS_RELEASE_STORE_FILE=/secure/jarvis-release.jks
+export JARVIS_RELEASE_STORE_PASSWORD='…'
+export JARVIS_RELEASE_KEY_ALIAS=jarvis-release
+export JARVIS_RELEASE_KEY_PASSWORD='…'
+export JARVIS_RELEASE_CERT_SHA256='AA:BB:…'   # or 64 hex chars
+export JARVIS_DEVELOPER_NAME='Roshan Hacker'
+export JARVIS_COPYRIGHT_OWNER='Roshan Hacker'
+
 ./gradlew :app:assembleRelease --no-daemon
+```
+
+At runtime, `SecurityManager.verify()` runs in `JarvisApp.onCreate()`:
+
+- package name must be `com.jarvis.assistant`,
+- release builds must be signed with the pinned certificate,
+- debug builds are exempt (local debug key),
+- a mismatch shows a non-cancellable tamper dialog and exits.
+
+Compute the fingerprint from the signing certificate:
+
+```bash
+keytool -list -v -keystore /secure/jarvis-release.jks -alias jarvis-release \
+  | grep 'SHA256:'
 ```
 
 ## Common build notes
 
-- `kapt` prints a warning that Kotlin language version 2.0 is unsupported; it
-  falls back to 1.9 and the build still succeeds.
-- `aapt2FromMavenOverride` is experimental; the warning is expected in this
-  environment.
-- Build Tools **36.0.0** is pinned in `app/build.gradle.kts`. The SDK's
-  Build Tools 34.0.0 package on this aarch64 host contains x86-64 `aidl` and
-  `aapt2` binaries, which fail with exec-format errors. Install 36.0.0 or set
-  `buildToolsVersion` to an aarch64-compatible package. The AIDL interface uses
-  explicit transaction IDs (`runCommand = 1`, Shizuku `destroy = 16777114`).
-- If the SDK is missing, create `local.properties`; never commit it.
-- If permissions or the API key are missing at runtime, the conversation service
-  reports a user-facing error instead of crashing. Configure the key in
-  **Settings → API Connection**.
+- **Build Tools 36.0.0 is pinned.** The 34.0.0 package on this aarch64 host ships
+  x86-64 `aidl`/`aapt2` binaries and fails with exec-format errors. Install
+  36.0.0 or point `buildToolsVersion` at an aarch64-compatible package.
+- **AIDL transaction IDs are explicit.** `IJarvisShellService` uses
+  `runCommand = 1`; Shizuku reserves `destroy = 16777114`. Do not reorder.
+- `kapt` warns that Kotlin 2.0 is unsupported and falls back to 1.9; the build
+  succeeds.
+- `aapt2FromMavenOverride` is experimental; its warning is expected.
+- Never commit `local.properties`, `*.jks`, `*.keystore` or signing passwords.
+  `.gitignore` already excludes them.
+- `app/build/` is ~780 MB after a full build; it is ignored.
 
 ## Useful verification sequence
 
@@ -101,7 +134,22 @@ the local debug key.
 ./gradlew :app:lintDebug --no-daemon
 ```
 
-All three tasks are expected to finish with `BUILD SUCCESSFUL`. The Shizuku
-binder handshake and custom MCP network calls require a real device/emulator
-with Shizuku running and cannot be covered by JVM unit tests; see
+All tasks should finish with `BUILD SUCCESSFUL`. The Shizuku binder handshake,
+custom MCP network calls, wake word and screen capture require a real
+device/emulator and cannot be covered by JVM tests. See
 [Shizuku and MCP tools](../features/shizuku-and-mcp.md#troubleshooting).
+
+## Troubleshooting
+
+| Symptom | Cause / fix |
+| --- | --- |
+| `Unsupported class file major version` | Gradle running on JDK 11. Set `JAVA_HOME` to JDK 21. |
+| `aidl: Exec format error` | Build Tools 34.0.0 on aarch64. Use 36.0.0. |
+| `SDK location not found` | Create `local.properties` with `sdk.dir`. |
+| Release build fails at `verifyReleaseSecurityInputs` | Missing keystore values or certificate pin. |
+| App exits immediately after install | Signature/package check failed (release build with wrong key). |
+| Live session reports `API_KEY_MISSING` | Set the key in **Settings → API Connection**. |
+| Live session reports `PERMISSIONS_MISSING` | Grant microphone and notifications. |
+| Wake word never triggers | `RECORD_AUDIO` denied, or the KWS model failed to load (check logcat tag `SherpaWakeWord`). |
+| Automation taps nothing | Accessibility service not enabled, or the foreground app does not match the task. |
+| MCP tool says Shizuku required | Shizuku not running or permission not granted. |
