@@ -181,6 +181,8 @@ class AudioPlayer(
         playbackThread?.interrupt()
         playbackThread = null
         audioQueue.clear()
+        val wasPlaying = isPlayingState.getAndSet(false)
+        isTurnComplete.set(true)
 
         synchronized(trackLock) {
             try {
@@ -194,6 +196,17 @@ class AudioPlayer(
                 Log.e(TAG, "Error releasing AudioTrack: ${e.message}")
             } finally {
                 audioTrack = null
+            }
+        }
+
+        // Let the service/UI know playback really stopped. Without this callback
+        // the conversation could stay stuck in SPEAKING after release.
+        if (wasPlaying) {
+            try {
+                onPlaybackStateChanged(false)
+                onPlaybackAmplitude(0f)
+            } catch (e: Exception) {
+                Log.w(TAG, "Playback stop callback failed during release: ${e.message}")
             }
         }
     }

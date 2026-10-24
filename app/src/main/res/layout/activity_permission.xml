@@ -83,7 +83,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="12dp"
-                    android:text="TechGPT X • Neural Assistant"
+                    android:text="Roshan Hacker • Neural Assistant"
                     android:textColor="?attr/themeTextPrimary"
                     android:textSize="16sp"
                     android:textStyle="bold" />

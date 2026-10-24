@@ -5,4 +5,11 @@
             <certificates src="system" />
         </trust-anchors>
     </base-config>
+
+    <!-- Custom MCP servers must use HTTPS except for a server running on the
+         same device during development. -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">127.0.0.1</domain>
+    </domain-config>
 </network-security-config>

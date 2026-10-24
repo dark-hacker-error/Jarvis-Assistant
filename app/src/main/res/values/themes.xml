@@ -8,7 +8,6 @@
         <item name="android:statusBarColor">#EEF2F9</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:navigationBarColor">#EEF2F9</item>
-        <item name="android:windowLightNavigationBar">true</item>
         <item name="android:windowBackground">#EEF2F9</item>
         <item name="colorPrimary">#2F6BFF</item>
         <item name="colorOnPrimary">#FFFFFF</item>
@@ -47,7 +46,6 @@
         <item name="android:statusBarColor">#070914</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:navigationBarColor">#070914</item>
-        <item name="android:windowLightNavigationBar">false</item>
         <item name="android:windowBackground">#070914</item>
         <item name="colorPrimary">#5B8CFF</item>
         <item name="colorOnPrimary">#FFFFFF</item>
@@ -86,7 +84,6 @@
         <item name="android:statusBarColor">#0E0307</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:navigationBarColor">#0E0307</item>
-        <item name="android:windowLightNavigationBar">false</item>
         <item name="android:windowBackground">#0E0307</item>
         <item name="colorPrimary">#FF4D5E</item>
         <item name="colorOnPrimary">#FFFFFF</item>
@@ -125,7 +122,6 @@
         <item name="android:statusBarColor">#FFF0EA</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:navigationBarColor">#FFF0EA</item>
-        <item name="android:windowLightNavigationBar">true</item>
         <item name="android:windowBackground">#FFF0EA</item>
         <item name="colorPrimary">#FF6A3D</item>
         <item name="colorOnPrimary">#FFFFFF</item>
@@ -164,7 +160,6 @@
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
-        <item name="android:windowLightNavigationBar">true</item>
         <item name="android:windowBackground">@android:color/transparent</item>
         <item name="android:colorBackground">@android:color/transparent</item>
         <item name="colorPrimary">#2F6BFF</item>
@@ -204,7 +199,6 @@
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
-        <item name="android:windowLightNavigationBar">false</item>
         <item name="android:windowBackground">@android:color/transparent</item>
         <item name="android:colorBackground">@android:color/transparent</item>
         <item name="colorPrimary">#5B8CFF</item>

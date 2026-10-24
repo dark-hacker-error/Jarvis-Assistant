@@ -14,14 +14,18 @@ val releaseStorePassword = configuredValue("JARVIS_RELEASE_STORE_PASSWORD")
 val releaseKeyAlias = configuredValue("JARVIS_RELEASE_KEY_ALIAS")
 val releaseKeyPassword = configuredValue("JARVIS_RELEASE_KEY_PASSWORD")
 val releaseCertSha256 = configuredValue("JARVIS_RELEASE_CERT_SHA256")?.replace(":", "")?.uppercase().orEmpty()
-val developerName = configuredValue("JARVIS_DEVELOPER_NAME")?.ifBlank { null } ?: "Tech GPTx"
-val copyrightOwner = configuredValue("JARVIS_COPYRIGHT_OWNER")?.ifBlank { null } ?: "Tech GPTx"
+val developerName = configuredValue("JARVIS_DEVELOPER_NAME")?.ifBlank { null } ?: "Roshan Hacker"
+val copyrightOwner = configuredValue("JARVIS_COPYRIGHT_OWNER")?.ifBlank { null } ?: "Roshan Hacker"
 val verificationEndpoint = configuredValue("JARVIS_VERIFICATION_ENDPOINT").orEmpty()
 val releaseSigningReady = listOf(releaseStorePath, releaseStorePassword, releaseKeyAlias, releaseKeyPassword).all { !it.isNullOrBlank() }
 
 android {
     namespace = "com.jarvis.assistant"
     compileSdk = 34
+    // The SDK installation on this host is aarch64. Build-tools 34.0.0 ships
+    // x86-64 host binaries (aidl/aapt2 fail with exec-format errors), while the
+    // installed 36.0.0 package has matching aarch64 binaries.
+    buildToolsVersion = "36.0.0"
 
     defaultConfig {
         applicationId = "com.jarvis.assistant"
@@ -72,6 +76,7 @@ android {
     buildFeatures {
         viewBinding = true
         buildConfig = true
+        aidl = true
     }
 
     lint {
@@ -116,6 +121,10 @@ dependencies {
     implementation("net.java.dev.jna:jna:5.13.0@aar")
     implementation("com.alphacephei:vosk-android:0.3.75@aar")
 
+    // Neural keyword spotting for the new wake path. The AAR is vendored
+    // because sherpa-onnx Android releases are not published to Maven Central.
+    implementation(files("libs/sherpa-onnx-1.13.8.aar"))
+
     // Room Database
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
@@ -123,6 +132,11 @@ dependencies {
 
     // Security Crypto for EncryptedSharedPreferences
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
+
+    // Shizuku: ADB/root powered system-level access. The provider AAR also
+    // contributes the Shizuku API permission to the merged manifest.
+    implementation("dev.rikka.shizuku:api:13.1.5")
+    implementation("dev.rikka.shizuku:provider:13.1.5")
 
     testImplementation("junit:junit:4.13.2")
 }

@@ -83,7 +83,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="12dp"
-                    android:text="System Authorized Jarvis TechGPT X"
+                    android:text="System Authorized Jarvis Roshan Hacker"
                     android:textColor="?attr/themeTextPrimary"
                     android:textSize="16sp"
                     android:textStyle="bold"
@@ -303,7 +303,7 @@
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="And in fact, it will be open source soon. Join if you want source code, Telegram discussion group, Instagram, YouTube. You will get a notification soon that it is open sourced."
+                    android:text="And in fact, it will be open source soon. Join the Telegram community, follow Instagram, or visit the official website for updates."
                     android:textColor="?attr/themeTextPrimary"
                     android:textSize="14sp"
                     android:lineSpacingExtra="4dp"
@@ -498,9 +498,9 @@
                     android:layout_height="1dp"
                     android:background="?attr/themeCardBorder" />
 
-                <!-- YouTube -->
+                <!-- Official Website -->
                 <LinearLayout
-                    android:id="@+id/btnJoinYoutube"
+                    android:id="@+id/btnJoinWebsite"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
@@ -513,8 +513,8 @@
                     <ImageView
                         android:layout_width="36dp"
                         android:layout_height="36dp"
-                        android:src="@drawable/ic_social_youtube"
-                        android:contentDescription="YouTube" />
+                        android:src="@drawable/ic_social_web"
+                        android:contentDescription="Website" />
 
                     <LinearLayout
                         android:layout_width="0dp"
@@ -526,7 +526,7 @@
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="YouTube Channel"
+                            android:text="Official Website"
                             android:textColor="?attr/themeTextPrimary"
                             android:textSize="15sp"
                             android:textStyle="bold"
@@ -535,7 +535,7 @@
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Watch tutorials, features, &amp; release demos"
+                            android:text="Visit the official Roshan Hacker website"
                             android:textColor="?attr/themeTextMuted"
                             android:textSize="12sp" />
                     </LinearLayout>
@@ -555,7 +555,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:gravity="center"
-                android:text="JARVIS INTELLIGENCE OS • TECHGPT X\nEngineered with complete local privacy &amp; transparency"
+                android:text="JARVIS INTELLIGENCE OS • ROSHAN HACKER\nEngineered with complete local privacy &amp; transparency"
                 android:textColor="?attr/themeTextMuted"
                 android:textSize="11.5sp"
                 android:lineSpacingExtra="3dp"

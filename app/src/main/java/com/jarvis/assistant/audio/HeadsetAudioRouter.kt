@@ -9,6 +9,7 @@ import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Build
 import android.util.Log
+import androidx.core.content.ContextCompat
 
 /**
  * HeadsetAudioRouter: Manages audio routing between:
@@ -77,7 +78,15 @@ class HeadsetAudioRouter(private val context: Context) {
                     addAction("android.bluetooth.headset.profile.action.CONNECTION_STATE_CHANGED")
                     addAction("android.bluetooth.adapter.action.STATE_CHANGED")
                 }
-                context.registerReceiver(headsetReceiver, filter)
+                // Target SDK 34 requires an explicit export flag. These are
+                // protected system broadcasts, so EXPORTED is the correct choice
+                // (ContextCompat applies it only on Android 13+).
+                ContextCompat.registerReceiver(
+                    context,
+                    headsetReceiver,
+                    filter,
+                    ContextCompat.RECEIVER_EXPORTED
+                )
 
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && audioDeviceCallback != null) {
                     audioManager.registerAudioDeviceCallback(audioDeviceCallback, null)

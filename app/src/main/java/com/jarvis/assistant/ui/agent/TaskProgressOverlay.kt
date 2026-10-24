@@ -81,8 +81,10 @@ class TaskProgressOverlay(private val context: Context) {
         visibility = View.VISIBLE
     }
     private val params = WindowManager.LayoutParams(
-        minOf(dp(236), context.resources.displayMetrics.widthPixels - dp(16)),
-        WindowManager.LayoutParams.WRAP_CONTENT,
+        // The overlay starts in avatar mode (88dp). Using the expanded pill width
+        // here created a large invisible window that swallowed touches.
+        dp(88),
+        dp(88),
         WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
         WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
         PixelFormat.TRANSLUCENT
@@ -117,6 +119,8 @@ class TaskProgressOverlay(private val context: Context) {
         pill.isClickable = true
         pill.setOnTouchListener { _, event -> handleOverlayTouch(event) }
         avatar.setOnTouchListener { _, event -> handleOverlayTouch(event) }
+        // Apply the correct width/visibility before the window is first attached.
+        applyMode()
     }
 
     fun update(snapshot: AgentTaskSnapshot?, showIdleAvatar: Boolean = false): Boolean {

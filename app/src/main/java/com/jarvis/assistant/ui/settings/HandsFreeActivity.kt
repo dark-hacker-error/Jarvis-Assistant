@@ -4,14 +4,19 @@ import android.content.Intent
 import android.content.res.ColorStateList
 import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
 import com.jarvis.assistant.R
 import com.jarvis.assistant.databinding.ActivityHandsFreeBinding
 import com.jarvis.assistant.ui.permission.PermissionActivity
 import com.jarvis.assistant.util.PermissionHelper
+import com.jarvis.assistant.util.SocialLinks
 import com.jarvis.assistant.util.ThemeManager
+import com.jarvis.assistant.voice.KernelSuRuntimeHelper
+import kotlinx.coroutines.launch
 
 class HandsFreeActivity : AppCompatActivity() {
 
@@ -30,6 +35,7 @@ class HandsFreeActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         updateServiceStatus()
+        updateNativeWakeStatus()
     }
 
     private fun setupListeners() {
@@ -39,6 +45,10 @@ class HandsFreeActivity : AppCompatActivity() {
 
         binding.btnToggleAccessibility.setOnClickListener {
             PermissionHelper.openAccessibilitySettings(this)
+        }
+
+        binding.btnActivateNativeWake.setOnClickListener {
+            activateNativeWake()
         }
 
         binding.btnOpenAccessibilitySettings.setOnClickListener {
@@ -54,19 +64,19 @@ class HandsFreeActivity : AppCompatActivity() {
         }
 
         binding.btnHandsFreeOfficialTelegram.setOnClickListener {
-            openUrl("https://t.me/+sYana61LvHdmZmE1")
+            openUrl(SocialLinks.TELEGRAM)
         }
 
         binding.btnHandsFreeDiscussion.setOnClickListener {
-            openUrl("https://t.me/+DmyO7NFUia01YTVl")
+            openUrl(SocialLinks.TELEGRAM)
         }
 
         binding.btnHandsFreeInstagram.setOnClickListener {
-            openUrl("https://www.instagram.com/techgptx.ai")
+            openUrl(SocialLinks.INSTAGRAM)
         }
 
         binding.tvFooterHandsFree.setOnClickListener {
-            openUrl("https://t.me/+sYana61LvHdmZmE1")
+            openUrl(SocialLinks.WEBSITE)
         }
     }
 
@@ -90,6 +100,67 @@ class HandsFreeActivity : AppCompatActivity() {
                 ContextCompat.getColor(this, R.color.status_red)
             )
             binding.btnToggleAccessibility.text = "Enable Accessibility Service"
+        }
+    }
+
+    private fun updateNativeWakeStatus() {
+        val active = KernelSuRuntimeHelper.isVoiceInteractionActive(this)
+        val configured = KernelSuRuntimeHelper.isVoiceInteractionConfigured(this)
+        val overlayAllowed = Settings.canDrawOverlays(this)
+
+        val status = when {
+            active && overlayAllowed -> "NATIVE WAKE: ACTIVE • ZERO NOTIFICATION"
+            active -> "NATIVE WAKE: ACTIVE • ALLOW OVERLAY FOR THE ORB"
+            configured -> "CONFIGURED • WAITING FOR SYSTEM BIND"
+            else -> "NATIVE WAKE: NOT ACTIVE • TAP TO ENABLE"
+        }
+        binding.tvNativeWakeStatus.text = status
+        binding.tvNativeWakeStatus.setTextColor(
+            ContextCompat.getColor(
+                this,
+                when {
+                    active && overlayAllowed -> R.color.status_green
+                    configured || active -> R.color.status_amber
+                    else -> R.color.status_red
+                }
+            )
+        )
+    }
+
+    private fun activateNativeWake() {
+        binding.btnActivateNativeWake.isEnabled = false
+        binding.tvNativeWakeStatus.text = "REQUESTING KERNELSU ROOT..."
+        lifecycleScope.launch {
+            val result = KernelSuRuntimeHelper.activate(this@HandsFreeActivity)
+            binding.btnActivateNativeWake.isEnabled = true
+            if (result.success) {
+                updateNativeWakeStatus()
+                Toast.makeText(
+                    this@HandsFreeActivity,
+                    "Silent wake configured. The system will bind it after refreshing the assistant.",
+                    Toast.LENGTH_LONG
+                ).show()
+            } else {
+                binding.tvNativeWakeStatus.text = "ROOT SETUP FAILED • OPEN ASSISTANT SETTINGS"
+                Toast.makeText(
+                    this@HandsFreeActivity,
+                    result.error ?: "KernelSU command failed",
+                    Toast.LENGTH_LONG
+                ).show()
+                openVoiceInputSettings()
+            }
+        }
+    }
+
+    private fun openVoiceInputSettings() {
+        try {
+            startActivity(Intent(Settings.ACTION_VOICE_INPUT_SETTINGS))
+        } catch (_: Throwable) {
+            try {
+                startActivity(Intent(Settings.ACTION_SETTINGS))
+            } catch (_: Throwable) {
+                Toast.makeText(this, "Unable to open assistant settings", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 

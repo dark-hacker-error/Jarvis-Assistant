@@ -78,7 +78,16 @@ class ScreenCaptureManager private constructor() {
         frameListener: ((ByteArray) -> Unit)? = null
     ): Boolean {
         if (_isSharing.value) {
-            Log.w(TAG, "Screen capture is already active")
+            Log.w(TAG, "Screen capture is already active; releasing the extra projection")
+            // The caller has already obtained a fresh MediaProjection token. If it
+            // is not attached to a virtual display it must be stopped explicitly,
+            // otherwise Android keeps the screen-capture session (and its
+            // notification) alive.
+            try {
+                projection.stop()
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not stop unused MediaProjection: ${e.message}")
+            }
             return false
         }
 
@@ -198,23 +207,36 @@ class ScreenCaptureManager private constructor() {
                 cleanBitmap.copyPixelsFromBuffer(destBuffer)
             }
 
+            // Compress while holding the lock: stopCapture() recycles
+            // latestBitmap from another thread, and compressing outside the lock
+            // can crash with "trying to use a recycled bitmap".
+            var jpegBytes: ByteArray? = null
             synchronized(bitmapLock) {
+                // stopCapture() may have completed while this frame was being
+                // decoded. Do not re-publish it after sharing stopped.
+                if (!_isSharing.value) {
+                    cleanBitmap.recycle()
+                    return
+                }
                 val old = latestBitmap
                 latestBitmap = cleanBitmap
                 old?.recycle()
                 lastBitmapTime = now
-            }
-            _hasReceivedFrame.value = true
+                _hasReceivedFrame.value = true
 
-            // Check if we should stream this frame out to Gemini Live
-            if (now - lastFrameTime >= minFrameIntervalMs) {
-                lastFrameTime = now
-                val jpegBytes = compressBitmapToJpeg(cleanBitmap, 70)
+                // Check if we should stream this frame out to Gemini Live
+                if (now - lastFrameTime >= minFrameIntervalMs) {
+                    lastFrameTime = now
+                    jpegBytes = compressBitmapToJpeg(cleanBitmap, 70)
+                }
+            }
+
+            jpegBytes?.let { bytes ->
                 framesSent++
                 if (framesSent % 10 == 1) {
-                    Log.i(TAG, "Streamed frame #$framesSent to Gemini (${jpegBytes.size / 1024} KB, ${cleanBitmap.width}x${cleanBitmap.height})")
+                    Log.i(TAG, "Streamed frame #$framesSent to Gemini (${bytes.size / 1024} KB, ${width}x${height})")
                 }
-                onFrameCallback?.invoke(jpegBytes)
+                onFrameCallback?.invoke(bytes)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error acquiring image frame: ${e.message}", e)

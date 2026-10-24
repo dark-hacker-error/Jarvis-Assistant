@@ -35,6 +35,12 @@ class AppPreferences(context: Context) {
         if (current == null || current !in GeminiConstants.SUPPORTED_MODELS) {
             prefs.edit().putString(KEY_MODEL, GeminiConstants.DEFAULT_MODEL).apply()
         }
+        // Keep either an old stored display label or an old selected persona
+        // from bringing the retired TechGPT X branding back after an upgrade.
+        val storedPersonality = prefs.getString(KEY_PERSONALITY, null)
+        if (storedPersonality == "TechGPT X Mode") {
+            prefs.edit().putString(KEY_PERSONALITY, "Roshan Hacker Mode").apply()
+        }
     }
 
     companion object {
@@ -70,6 +76,7 @@ class AppPreferences(context: Context) {
         private const val KEY_TASK_OVERLAY_X = "key_task_overlay_x"
         private const val KEY_TASK_OVERLAY_Y = "key_task_overlay_y"
         private const val KEY_APP_THEME = "key_app_theme"
+        private const val KEY_BOTTOM_NAV_STYLE = "key_bottom_nav_style"
         private const val KEY_CUSTOM_THEME_COLOR = "key_custom_theme_color"
         private const val KEY_ORB_ANIMATION = "key_orb_animation"
         private const val KEY_ORB_SPEED = "key_orb_speed"
@@ -171,13 +178,37 @@ class AppPreferences(context: Context) {
     }
 
     var apiKey: String
-        get() = secureApiPrefs?.getString(KEY_API_KEY, "")?.trim() ?: ""
+        get() {
+            // Prefer the encrypted store, but never hide a key that still lives in
+            // the legacy plaintext store (e.g. Keystore is temporarily unavailable).
+            // A previously initialised encrypted store can also fail at read time
+            // if the Keystore key was invalidated; fall back instead of crashing.
+            val secureValue = try {
+                secureApiPrefs?.getString(KEY_API_KEY, "")?.trim().orEmpty()
+            } catch (e: Exception) {
+                Log.e(TAG, "Could not read the encrypted API key; trying legacy storage", e)
+                ""
+            }
+            if (secureValue.isNotEmpty()) return secureValue
+            return prefs.getString(KEY_API_KEY, "")?.trim().orEmpty()
+        }
         set(value) {
-            val secure = checkNotNull(secureApiPrefs) { "Secure API-key storage is unavailable on this device." }
             val clean = value.trim()
-            val saved = if (clean.isEmpty()) secure.edit().remove(KEY_API_KEY).commit()
-            else secure.edit().putString(KEY_API_KEY, clean).commit()
-            check(saved) { "Could not save API key to encrypted storage." }
+            val secure = secureApiPrefs
+            if (secure != null) {
+                val saved = if (clean.isEmpty()) secure.edit().remove(KEY_API_KEY).commit()
+                else secure.edit().putString(KEY_API_KEY, clean).commit()
+                check(saved) { "Could not save API key to encrypted storage." }
+                // The secure copy is authoritative now; drop any legacy duplicate.
+                prefs.edit().remove(KEY_API_KEY).apply()
+            } else {
+                // Encrypted storage is unavailable on this device. Keep the key
+                // functional in plaintext instead of failing to save it at all.
+                Log.w(TAG, "Encrypted storage unavailable; saving API key to standard preferences")
+                val saved = if (clean.isEmpty()) prefs.edit().remove(KEY_API_KEY).commit()
+                else prefs.edit().putString(KEY_API_KEY, clean).commit()
+                check(saved) { "Could not save API key." }
+            }
         }
 
     val canStoreApiKeySecurely: Boolean get() = secureApiPrefs != null
@@ -186,7 +217,9 @@ class AppPreferences(context: Context) {
         val legacyKey = prefs.getString(KEY_API_KEY, null)?.trim().orEmpty()
         if (legacyKey.isEmpty()) return
         val secure = secureApiPrefs ?: run {
-            prefs.edit().remove(KEY_API_KEY).commit()
+            // Do not delete the only copy of the key just because this device
+            // cannot initialise encrypted storage. The getter still reads it.
+            Log.w(TAG, "Encrypted storage unavailable; keeping legacy API key in place")
             return
         }
         try {
@@ -235,11 +268,17 @@ class AppPreferences(context: Context) {
     var userName: String
         get() {
             val name = prefs.getString(KEY_USER_NAME, "") ?: ""
-            return if (name.isBlank() || name == "Salaam") "TechGPT X" else name
+            return if (name.isBlank() || name == "Salaam") "Roshan Hacker" else name
         }
         set(value) {
             prefs.edit().putString(KEY_USER_NAME, value.trim()).commit()
         }
+
+    var bottomNavStyle: String
+        get() = if (prefs.getString(KEY_BOTTOM_NAV_STYLE, "glass") == "classic") "classic" else "glass"
+        set(value) = prefs.edit()
+            .putString(KEY_BOTTOM_NAV_STYLE, if (value == "classic") "classic" else "glass")
+            .apply()
 
     var appTheme: String
         get() {

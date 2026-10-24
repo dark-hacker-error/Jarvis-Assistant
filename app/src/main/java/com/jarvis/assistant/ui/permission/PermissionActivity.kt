@@ -1,6 +1,7 @@
 package com.jarvis.assistant.ui.permission
 
 import android.Manifest
+import android.content.Intent
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
@@ -17,7 +18,9 @@ import androidx.core.content.ContextCompat
 import androidx.core.widget.NestedScrollView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import com.jarvis.assistant.JarvisApp
 import com.jarvis.assistant.databinding.ActivityPermissionBinding
+import com.jarvis.assistant.ui.settings.ShizukuSettingsActivity
 import com.jarvis.assistant.util.PermissionHelper
 import com.jarvis.assistant.util.ThemeManager
 
@@ -128,6 +131,7 @@ class PermissionActivity : AppCompatActivity() {
         updateExtraPermission("bluetooth", Build.VERSION.SDK_INT < Build.VERSION_CODES.S || hasPermission(Manifest.permission.BLUETOOTH_CONNECT))
         updateExtraPermission("battery", PermissionHelper.hasBatteryOptimizationPermission(this))
         updateExtraPermission("brightness", PermissionHelper.hasWriteSettingsPermission(this))
+        updateExtraPermission("shizuku", JarvisApp.instance.shizukuManager.hasPermission())
 
         if (hasMic && hasLoc && hasNotif && hasA11y) {
             binding.btnGrantAll.text = "ALL ESSENTIAL PERMISSIONS GRANTED ✓"
@@ -226,6 +230,9 @@ class PermissionActivity : AppCompatActivity() {
             section.addView(body)
             extraStatus[key] = status
             extraButtons[key] = button
+        }
+        card("shizuku", "Shizuku access", "Optional: grants ADB/root-level system controls. Open this to request Shizuku permission and start the privileged service.", com.jarvis.assistant.R.drawable.ic_settings_shield) {
+            startActivity(Intent(this, ShizukuSettingsActivity::class.java))
         }
         card("contacts", "Contacts", "Lets WhatsApp and calling features resolve saved contact names.", com.jarvis.assistant.R.drawable.ic_nav_chat) {
             if (!PermissionHelper.hasContactsPermission(this)) contactsLauncher.launch(Manifest.permission.READ_CONTACTS) else PermissionHelper.openAppSettings(this)

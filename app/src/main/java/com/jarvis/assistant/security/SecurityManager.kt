@@ -4,26 +4,29 @@ import android.app.AlertDialog
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import android.util.Log
+import com.jarvis.assistant.BuildConfig
 import java.security.MessageDigest
 import kotlin.system.exitProcess
 
 /**
  * JARVIS ASSISTANT — SECURITY MODULE
- * Developer       : Tech GPTx
- * Copyright © 2026: Tech GPTx. All Rights Reserved.
- * GitHub          : https://github.com/techgptx/Playlist
+ * Developer       : Roshan Hacker
+ * Copyright © 2026: Roshan Hacker. All Rights Reserved.
+ * Website         : https://roshanx.netlify.app/
  */
 object SecurityManager {
 
-    const val DEVELOPER_NAME    = "Tech GPTx"
-    const val COPYRIGHT_NOTICE  = "Copyright © 2026 Tech GPTx. All Rights Reserved."
-    const val GITHUB_REPO       = "https://github.com/techgptx/Playlist"
-    const val LICENSE_NAME      = "TAMCL v1.0 — Content creators MUST credit Tech GPTx"
+    const val DEVELOPER_NAME    = "Roshan Hacker"
+    const val COPYRIGHT_NOTICE  = "Copyright © 2026 Roshan Hacker. All Rights Reserved."
+    const val GITHUB_REPO       = "https://roshanx.netlify.app/"
+    const val LICENSE_NAME      = "TAMCL v1.0 — Content creators MUST credit Roshan Hacker"
 
     private const val EXPECTED_PACKAGE = "com.jarvis.assistant"
 
     fun verify(context: Context) {
         checkPackageName(context)
+        checkSignature(context)
     }
 
     private fun checkPackageName(context: Context) {
@@ -39,15 +42,27 @@ object SecurityManager {
         }
     }
 
-    @Suppress("unused")
     private fun checkSignature(context: Context) {
-        val EXPECTED_SHA256 = "PASTE_YOUR_APK_SHA256_FINGERPRINT_HERE"
+        // Debug builds are signed with the developer's local debug key, so the
+        // release pin intentionally does not apply to them.
+        if (BuildConfig.DEBUG) return
 
-        val actual = getApkSignatureSha256(context) ?: run {
+        val expected = BuildConfig.PINNED_RELEASE_CERT_SHA256
+            .filter(Char::isLetterOrDigit)
+            .uppercase()
+        if (expected.length != 64) {
+            // Release packaging already refuses to build without this pin. Stay
+            // non-destructive at runtime if a custom build bypasses that check.
+            Log.w("SecurityManager", "Release certificate pin is not configured; signature check skipped")
+            return
+        }
+
+        val signers = AppIdentityVerifier.currentSignerSha256(context)
+        if (signers.isEmpty()) {
             showTamperAlert(context, "Verification Failed", "Unable to verify app authenticity. Closing.")
             return
         }
-        if (!actual.equals(EXPECTED_SHA256, ignoreCase = true)) {
+        if (signers.none { it.equals(expected, ignoreCase = true) }) {
             showTamperAlert(
                 context,
                 "Tampered APK Detected",

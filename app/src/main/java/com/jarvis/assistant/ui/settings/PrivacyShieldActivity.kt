@@ -5,6 +5,7 @@ import android.net.Uri
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
 import com.jarvis.assistant.databinding.ActivityPrivacyShieldBinding
+import com.jarvis.assistant.util.SocialLinks
 import com.jarvis.assistant.util.ThemeManager
 
 class PrivacyShieldActivity : AppCompatActivity() {
@@ -23,19 +24,19 @@ class PrivacyShieldActivity : AppCompatActivity() {
         }
 
         binding.btnJoinOfficialTelegram.setOnClickListener {
-            openUrl("https://t.me/+sYana61LvHdmZmE1")
+            openUrl(SocialLinks.TELEGRAM)
         }
 
         binding.btnJoinTelegram.setOnClickListener {
-            openUrl("https://t.me/+DmyO7NFUia01YTVl")
+            openUrl(SocialLinks.TELEGRAM)
         }
 
         binding.btnJoinInstagram.setOnClickListener {
-            openUrl("https://www.instagram.com/techgptx.ai")
+            openUrl(SocialLinks.INSTAGRAM)
         }
 
-        binding.btnJoinYoutube.setOnClickListener {
-            openUrl("https://youtube.com/@TechGptX")
+        binding.btnJoinWebsite.setOnClickListener {
+            openUrl(SocialLinks.WEBSITE)
         }
     }
 

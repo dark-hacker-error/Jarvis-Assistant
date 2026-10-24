@@ -26,10 +26,17 @@ class WhatsAppAssistant(
     companion object {
         private const val TAG = "WhatsAppAssistant"
         private const val WHATSAPP_PACKAGE = "com.whatsapp"
+        private const val WHATSAPP_BUSINESS_PACKAGE = "com.whatsapp.w4b"
     }
+
+    private enum class DisambiguationAction { MESSAGE, CALL, DELETE }
 
     private var pendingDraft: PendingWhatsAppDraft? = null
     private var disambiguationCandidates: List<ContactInfo>? = null
+    private var disambiguationAction = DisambiguationAction.MESSAGE
+    private var disambiguationMessage = ""
+    private var disambiguationVideo = false
+    private var disambiguationForEveryone = false
 
     fun hasPendingDraft(): Boolean = pendingDraft != null
 
@@ -46,6 +53,12 @@ class WhatsAppAssistant(
             return "What message would you like to send to $cleanContact?"
         }
 
+        // A new message request supersedes any older unsent draft. Without this
+        // reset, an ambiguous new contact could trigger confirmAndSend() and send
+        // the previous draft to the previous person.
+        pendingDraft = null
+        disambiguationCandidates = null
+
         val resolution = contactResolver.resolveContact(cleanContact)
         when (resolution) {
             is ContactResolutionResult.SingleMatch -> {
@@ -60,6 +73,8 @@ class WhatsAppAssistant(
             }
             is ContactResolutionResult.MultipleMatches -> {
                 disambiguationCandidates = resolution.candidates
+                disambiguationAction = DisambiguationAction.MESSAGE
+                disambiguationMessage = cleanMessage
                 val names = resolution.candidates.take(3).map { it.name }.joinToString(" and ")
                 return "Which $cleanContact? I found $names."
             }
@@ -89,22 +104,58 @@ class WhatsAppAssistant(
 
     fun handleDisambiguationChoice(userChoice: String, pendingMessage: String = ""): String {
         val candidates = disambiguationCandidates ?: return "No contact disambiguation in progress."
-        val chosen = candidates.find {
-            it.name.contains(userChoice, ignoreCase = true) || userChoice.contains(it.name, ignoreCase = true)
-        } ?: candidates.firstOrNull()
+        val normalized = userChoice.trim()
+        val candidatesList = candidates
 
+        val ordinal = when {
+            normalized.equals("1", ignoreCase = true) || normalized.contains("first", ignoreCase = true) -> 0
+            normalized.equals("2", ignoreCase = true) || normalized.contains("second", ignoreCase = true) -> 1
+            normalized.equals("3", ignoreCase = true) || normalized.contains("third", ignoreCase = true) -> 2
+            else -> -1
+        }
+        val byName = if (normalized.isBlank()) null else candidatesList.find {
+            it.name.contains(normalized, ignoreCase = true) || normalized.contains(it.name, ignoreCase = true)
+        }
+        // Never guess the first contact: sending a private message to the wrong
+        // person is worse than asking the user to repeat the choice.
+        val chosen = byName ?: candidatesList.getOrNull(ordinal)
+
+        if (chosen == null) {
+            disambiguationCandidates = candidatesList
+            val names = candidatesList.take(3).mapIndexed { index, contact -> "${index + 1}. ${contact.name}" }
+                .joinToString(", ")
+            return "I couldn't identify which contact you meant. Please say the name or number: $names."
+        }
+
+        val action = disambiguationAction
+        val storedMessage = disambiguationMessage
+        val video = disambiguationVideo
+        val forEveryone = disambiguationForEveryone
         disambiguationCandidates = null
+        disambiguationAction = DisambiguationAction.MESSAGE
+        disambiguationMessage = ""
+        disambiguationVideo = false
+        disambiguationForEveryone = false
 
-        return if (chosen != null) {
-            val msg = if (pendingMessage.isNotBlank()) pendingMessage else "Hello"
-            pendingDraft = PendingWhatsAppDraft(
-                contactName = chosen.name,
-                phoneNumber = chosen.phoneNumber,
-                message = msg
-            )
-            "Draft ready for ${chosen.name}. Should I send it?"
-        } else {
-            "I couldn't identify which contact you meant, sir."
+        // Resume the original operation. Previously every choice created a
+        // message draft, so choosing a contact for a call or delete silently
+        // changed the requested action.
+        return when (action) {
+            DisambiguationAction.CALL -> {
+                makeCall(chosen.phoneNumber.ifBlank { chosen.name }, video)
+            }
+            DisambiguationAction.DELETE -> {
+                deleteLastMessage(chosen.phoneNumber.ifBlank { chosen.name }, forEveryone)
+            }
+            DisambiguationAction.MESSAGE -> {
+                val msg = storedMessage.ifBlank { pendingMessage }.ifBlank { "Hello" }
+                pendingDraft = PendingWhatsAppDraft(
+                    contactName = chosen.name,
+                    phoneNumber = chosen.phoneNumber,
+                    message = msg
+                )
+                "Draft ready for ${chosen.name}. Should I send it?"
+            }
         }
     }
 
@@ -136,13 +187,7 @@ class WhatsAppAssistant(
                 else -> rawDigits
             }
 
-            val targetPkg = if (isPackageInstalled(WHATSAPP_PACKAGE)) {
-                WHATSAPP_PACKAGE
-            } else if (isPackageInstalled("com.whatsapp.w4b")) {
-                "com.whatsapp.w4b"
-            } else {
-                WHATSAPP_PACKAGE
-            }
+            val targetPkg = whatsAppPackage()
 
             val intent = if (cleanPhone.isNotBlank()) {
                 Intent(Intent.ACTION_VIEW, Uri.parse("https://api.whatsapp.com/send?phone=$cleanPhone&text=$encodedMessage")).apply {
@@ -181,7 +226,26 @@ class WhatsAppAssistant(
         }
     }
 
+    /**
+     * Prefers regular WhatsApp, then WhatsApp Business. Every deep link /
+     * launch intent must use the package that is actually installed.
+     */
+    private fun whatsAppPackage(): String = when {
+        isPackageInstalled(WHATSAPP_PACKAGE) -> WHATSAPP_PACKAGE
+        isPackageInstalled(WHATSAPP_BUSINESS_PACKAGE) -> WHATSAPP_BUSINESS_PACKAGE
+        else -> WHATSAPP_PACKAGE
+    }
+
     fun cancelDraft(): String {
+        if (disambiguationCandidates != null) {
+            disambiguationCandidates = null
+            pendingDraft = null
+            disambiguationAction = DisambiguationAction.MESSAGE
+            disambiguationMessage = ""
+            disambiguationVideo = false
+            disambiguationForEveryone = false
+            return "Contact selection cancelled. I did not send, call, or delete anything."
+        }
         return if (pendingDraft != null) {
             val name = pendingDraft?.contactName
             pendingDraft = null
@@ -197,17 +261,24 @@ class WhatsAppAssistant(
             return "Who would you like to call on WhatsApp?"
         }
 
+        // A call request supersedes an unsent message draft.
+        pendingDraft = null
+        disambiguationCandidates = null
+
         val resolution = contactResolver.resolveContact(cleanContact)
         val contact = when (resolution) {
             is ContactResolutionResult.SingleMatch -> resolution.contact
             is ContactResolutionResult.MultipleMatches -> {
                 disambiguationCandidates = resolution.candidates
+                disambiguationAction = DisambiguationAction.CALL
+                disambiguationVideo = isVideo
                 val names = resolution.candidates.take(3).map { it.name }.joinToString(" and ")
                 return "Which $cleanContact? I found $names."
             }
             else -> null
         }
 
+        disambiguationCandidates = null
         val callType = if (isVideo) "video call" else "voice call"
 
         if (contact == null || contact.phoneNumber.isBlank()) {
@@ -232,15 +303,16 @@ class WhatsAppAssistant(
             }
 
             val callDataUri = getWhatsAppCallDataUri(contact.id, mimeType)
+            val targetPkg = whatsAppPackage()
             val intent = if (callDataUri != null) {
                 Intent(Intent.ACTION_VIEW).apply {
                     setDataAndType(callDataUri, mimeType)
-                    setPackage(WHATSAPP_PACKAGE)
+                    setPackage(targetPkg)
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
             } else {
                 Intent(Intent.ACTION_VIEW, Uri.parse("https://api.whatsapp.com/send?phone=$cleanPhone")).apply {
-                    setPackage(WHATSAPP_PACKAGE)
+                    setPackage(targetPkg)
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
             }
@@ -271,11 +343,14 @@ class WhatsAppAssistant(
                 // Arm accessibility BEFORE bringing WhatsApp to the foreground so it's
                 // ready to act on whatever chat is currently visible.
                 JarvisAccessibilityService.triggerWhatsAppDelete(forEveryone)
-                val launchIntent = context.packageManager.getLaunchIntentForPackage(WHATSAPP_PACKAGE)?.apply {
+                val targetPkg = whatsAppPackage()
+                val launchIntent = context.packageManager.getLaunchIntentForPackage(targetPkg)?.apply {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
                 }
                 if (launchIntent != null) {
                     ActivityLauncherHelper.startActivitySafely(context, launchIntent)
+                } else {
+                    return "WhatsApp is not installed, so I couldn't open the chat to delete the message."
                 }
                 "Deleting the last message $callType."
             } catch (e: Exception) {
@@ -284,17 +359,24 @@ class WhatsAppAssistant(
             }
         }
 
+        // A targeted delete supersedes an unsent message draft.
+        pendingDraft = null
+        disambiguationCandidates = null
+
         val resolution = contactResolver.resolveContact(cleanContact)
         val phoneCandidate = when (resolution) {
             is ContactResolutionResult.SingleMatch -> resolution.contact.phoneNumber
             is ContactResolutionResult.MultipleMatches -> {
                 disambiguationCandidates = resolution.candidates
+                disambiguationAction = DisambiguationAction.DELETE
+                disambiguationForEveryone = forEveryone
                 val names = resolution.candidates.take(3).map { it.name }.joinToString(" and ")
                 return "Which $cleanContact? I found $names."
             }
             else -> null
         }
 
+        disambiguationCandidates = null
         val rawDigits = (phoneCandidate ?: cleanContact).replace(Regex("[^0-9]"), "")
         if (rawDigits.isBlank()) {
             return "I couldn't find a phone number for $cleanContact to open that chat."
@@ -308,7 +390,7 @@ class WhatsAppAssistant(
         return try {
             JarvisAccessibilityService.triggerWhatsAppDelete(forEveryone)
             val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://api.whatsapp.com/send?phone=$cleanPhone")).apply {
-                setPackage(WHATSAPP_PACKAGE)
+                setPackage(whatsAppPackage())
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             ActivityLauncherHelper.startActivitySafely(context, intent)
@@ -319,6 +401,7 @@ class WhatsAppAssistant(
         }
     }
 
+    @Suppress("SuspiciousIndentation") // Lint false positive on the multiline query arguments below.
     private fun getWhatsAppCallDataUri(contactId: String, mimeType: String): Uri? {
         return try {
             val cursor = context.contentResolver.query(

@@ -14,6 +14,8 @@ import com.jarvis.assistant.data.memory.MemoryRepository
 import com.jarvis.assistant.data.preferences.AppPreferences
 import com.jarvis.assistant.data.preferences.YouTubePreferences
 import com.jarvis.assistant.data.repository.ChatRepository
+import com.jarvis.assistant.mcp.McpManager
+import com.jarvis.assistant.system.ShizukuManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -58,6 +60,12 @@ class JarvisApp : Application() {
     lateinit var commandExecutor: CommandExecutor
         private set
 
+    lateinit var shizukuManager: ShizukuManager
+        private set
+
+    lateinit var mcpManager: McpManager
+        private set
+
     override fun onCreate() {
         super.onCreate()
         SecurityManager.verify(this)
@@ -76,6 +84,11 @@ class JarvisApp : Application() {
         contactResolver = ContactResolver(this)
         phoneControlManager = PhoneControlManager(this, contactResolver)
         whatsAppAssistant = WhatsAppAssistant(this, contactResolver)
+
+        // Shizuku + MCP extensions. Both are additive: if Shizuku is absent or
+        // permission is denied, the rest of Jarvis keeps working normally.
+        shizukuManager = ShizukuManager(this)
+        mcpManager = McpManager(this, shizukuManager)
 
         // Command Engine
         commandExecutor = CommandExecutor(

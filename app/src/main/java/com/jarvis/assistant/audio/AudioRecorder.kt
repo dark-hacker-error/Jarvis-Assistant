@@ -1,207 +1,123 @@
 package com.jarvis.assistant.audio
 
-import android.annotation.SuppressLint
-import android.media.AudioFormat
-import android.media.AudioRecord
-import android.media.MediaRecorder
-import android.media.audiofx.AcousticEchoCanceler
-import android.media.audiofx.AutomaticGainControl
-import android.media.audiofx.NoiseSuppressor
+import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicBoolean
 
+/**
+ * Compatibility facade for the existing conversation pipeline.
+ *
+ * The microphone itself now belongs to [AudioCaptureBus]. This class only
+ * subscribes to the bus, applies the mute flag, and drains the wake-word
+ * hand-off pre-roll before live frames are forwarded. As a result the
+ * conversation service no longer opens a second AudioRecord while the wake
+ * engine is releasing its own.
+ */
 class AudioRecorder(
+    private val context: Context,
     private val onAudioChunk: (chunk: ByteArray, amplitude: Float, frequencyData: AudioFrequencyData) -> Unit
 ) {
     companion object {
         private const val TAG = "AudioRecorder"
-        const val SAMPLE_RATE = 16000
-        const val CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO
-        const val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
-        // Ultra-low latency 20ms chunk: 16000 samples/sec * 0.02s * 2 bytes/sample = 640 bytes
-        const val CHUNK_SIZE_BYTES = 640
+        const val SAMPLE_RATE = AudioCaptureBus.SAMPLE_RATE
+        const val CHUNK_SIZE_BYTES = AudioCaptureBus.CHUNK_SIZE_BYTES
     }
 
-    private var audioRecord: AudioRecord? = null
-    private var echoCanceler: AcousticEchoCanceler? = null
-    private var noiseSuppressor: NoiseSuppressor? = null
-    private var automaticGainControl: AutomaticGainControl? = null
-    private var recordingJob: Job? = null
     private val isRecording = AtomicBoolean(false)
+    private val handoffGate = AtomicBoolean(false)
+    private val gateLock = Any()
+    private val parkedLiveFrames = ConcurrentLinkedQueue<AudioCaptureBus.Frame>()
     val isMuted = AtomicBoolean(false)
 
-    @SuppressLint("MissingPermission")
+    private val busListener = AudioCaptureBus.Listener { frame ->
+        synchronized(gateLock) {
+            if (!isRecording.get()) return@Listener
+            if (handoffGate.get()) {
+                // The bus can deliver a live frame while the hand-off pre-roll is
+                // still being forwarded. Park it so audio stays in chronological
+                // order instead of jumping ahead of the wake tail.
+                parkedLiveFrames.offer(frame)
+                if (parkedLiveFrames.size > 250) {
+                    parkedLiveFrames.poll()
+                }
+                return@Listener
+            }
+        }
+        deliver(frame)
+    }
+
     fun start(scope: CoroutineScope): Boolean {
         if (isRecording.get()) return true
 
-        val minBufferSize = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT)
-        if (minBufferSize == AudioRecord.ERROR || minBufferSize == AudioRecord.ERROR_BAD_VALUE) {
-            Log.e(TAG, "Unable to get valid min buffer size")
+        isRecording.set(true)
+        handoffGate.set(true)
+
+        if (!AudioCaptureBus.register(context, busListener)) {
+            Log.e(TAG, "Unable to attach to AudioCaptureBus")
+            isRecording.set(false)
+            handoffGate.set(false)
             return false
         }
 
-        val bufferSize = maxOf(minBufferSize * 4, 32000)
-
-        return try {
-            val record = AudioRecord(
-                MediaRecorder.AudioSource.VOICE_COMMUNICATION,
-                SAMPLE_RATE,
-                CHANNEL_CONFIG,
-                AUDIO_FORMAT,
-                bufferSize
-            )
-
-            if (record.state != AudioRecord.STATE_INITIALIZED) {
-                Log.e(TAG, "AudioRecord initialization failed")
-                record.release()
-                return false
+        val preRoll = AudioCaptureBus.drainHandoff()
+        if (preRoll.isEmpty()) {
+            // A frame can race registration even when there is no pre-roll.
+            // Close the gate off the main thread so the caller never blocks.
+            scope.launch(Dispatchers.Default) {
+                finishHandoff()
             }
+            return true
+        }
 
-            val sessionId = record.audioSessionId
-            if (AcousticEchoCanceler.isAvailable()) {
-                try {
-                    echoCanceler = AcousticEchoCanceler.create(sessionId)?.apply {
-                        enabled = true
-                    }
-                    Log.i(TAG, "Hardware AcousticEchoCanceler enabled on session $sessionId")
-                } catch (e: Exception) {
-                    Log.w(TAG, "Failed to enable AcousticEchoCanceler: ${e.message}")
+        scope.launch(Dispatchers.Default) {
+            try {
+                for (frame in preRoll) {
+                    if (!isRecording.get()) break
+                    deliver(frame)
                 }
+            } finally {
+                // Keep the gate closed until parked live frames are drained;
+                // otherwise a newer frame can overtake the wake tail.
+                finishHandoff()
             }
+        }
+        return true
+    }
 
-            if (NoiseSuppressor.isAvailable()) {
-                try {
-                    noiseSuppressor = NoiseSuppressor.create(sessionId)?.apply {
-                        enabled = true
-                    }
-                    Log.i(TAG, "Hardware NoiseSuppressor enabled on session $sessionId")
-                } catch (e: Exception) {
-                    Log.w(TAG, "Failed to enable NoiseSuppressor: ${e.message}")
-                }
+    /**
+     * Must be called while holding [gateLock]. Drains every frame that was
+     * parked during the pre-roll, then opens the gate. A listener that arrives
+     * while this is running blocks on [gateLock]; it will either be parked
+     * before the drain or delivered directly after the gate opens, never in
+     * the middle of the pre-roll.
+     */
+    private fun finishHandoff() {
+        synchronized(gateLock) {
+            while (isRecording.get()) {
+                val frame = parkedLiveFrames.poll() ?: break
+                deliver(frame)
             }
+            handoffGate.set(false)
+        }
+    }
 
-            if (AutomaticGainControl.isAvailable()) {
-                try {
-                    automaticGainControl = AutomaticGainControl.create(sessionId)?.apply {
-                        enabled = true
-                    }
-                    Log.i(TAG, "Hardware AutomaticGainControl enabled on session $sessionId")
-                } catch (e: Exception) {
-                    Log.w(TAG, "Failed to enable AutomaticGainControl: ${e.message}")
-                }
-            }
-
-            record.startRecording()
-            audioRecord = record
-            isRecording.set(true)
-
-            recordingJob = scope.launch(Dispatchers.IO) {
-                try {
-                    android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_AUDIO)
-                } catch (_: Exception) {}
-                val buffer = ByteArray(CHUNK_SIZE_BYTES)
-                var currentRecord: AudioRecord? = record
-                while (isActive && isRecording.get()) {
-                    var consecutiveErrors = 0
-                    while (isActive && isRecording.get() && currentRecord != null) {
-                        try {
-                            val readBytes = currentRecord.read(buffer, 0, buffer.size)
-                            if (readBytes > 0) {
-                                consecutiveErrors = 0
-                                val freq = AudioUtils.analyzeFrequency(buffer, readBytes, SAMPLE_RATE)
-                                if (!isMuted.get()) {
-                                    val chunkCopy = buffer.copyOf(readBytes)
-                                    onAudioChunk(chunkCopy, freq.amplitude, freq)
-                                } else {
-                                    onAudioChunk(ByteArray(0), 0f, AudioFrequencyData())
-                                }
-                            } else if (readBytes < 0) {
-                                consecutiveErrors++
-                                Log.w(TAG, "AudioRecord read error code: $readBytes (error count: $consecutiveErrors)")
-                                delay(40)
-                                if (consecutiveErrors > 10 && isRecording.get()) {
-                                    Log.e(TAG, "Consecutive AudioRecord read errors exceeded limit. Attempting auto-recovery...")
-                                    break
-                                }
-                            }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Exception during AudioRecord read loop: ${e.message}", e)
-                            delay(50)
-                        }
-                    }
-
-                    // Auto-recovery if broken but still meant to be recording:
-                    if (isActive && isRecording.get()) {
-                        delay(400)
-                        try {
-                            currentRecord?.release()
-                        } catch (_: Exception) {}
-                        try {
-                            val newRecord = AudioRecord(
-                                MediaRecorder.AudioSource.VOICE_COMMUNICATION,
-                                SAMPLE_RATE,
-                                CHANNEL_CONFIG,
-                                AUDIO_FORMAT,
-                                bufferSize
-                            )
-                            if (newRecord.state == AudioRecord.STATE_INITIALIZED) {
-                                newRecord.startRecording()
-                                currentRecord = newRecord
-                                audioRecord = newRecord
-                                Log.i(TAG, "AudioRecord successfully auto-recovered and restarted!")
-                            } else {
-                                newRecord.release()
-                                delay(1000)
-                            }
-                        } catch (reInitEx: Exception) {
-                            Log.e(TAG, "AudioRecord auto-recovery failed: ${reInitEx.message}")
-                            delay(1000)
-                        }
-                    }
-                }
-            }
-            true
-        } catch (e: Exception) {
-            Log.e(TAG, "Error starting AudioRecord: ${e.message}", e)
-            false
+    private fun deliver(frame: AudioCaptureBus.Frame) {
+        if (isMuted.get()) {
+            onAudioChunk(ByteArray(0), 0f, AudioFrequencyData())
+        } else {
+            onAudioChunk(frame.pcm, frame.amplitude, frame.frequency)
         }
     }
 
     fun stop() {
-        isRecording.set(false)
-        recordingJob?.cancel()
-        recordingJob = null
-
-        try {
-            echoCanceler?.release()
-            noiseSuppressor?.release()
-            automaticGainControl?.release()
-        } catch (e: Exception) {
-            Log.e(TAG, "Error releasing audio effects: ${e.message}")
-        } finally {
-            echoCanceler = null
-            noiseSuppressor = null
-            automaticGainControl = null
-        }
-
-        try {
-            audioRecord?.let {
-                if (it.state == AudioRecord.STATE_INITIALIZED) {
-                    it.stop()
-                }
-                it.release()
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error stopping AudioRecord: ${e.message}")
-        } finally {
-            audioRecord = null
-        }
+        if (!isRecording.getAndSet(false)) return
+        AudioCaptureBus.unregister(busListener)
+        handoffGate.set(false)
+        parkedLiveFrames.clear()
     }
 
     fun setMuted(muted: Boolean) {

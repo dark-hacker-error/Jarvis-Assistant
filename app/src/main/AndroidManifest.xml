@@ -26,7 +26,22 @@
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
+    <!-- Shizuku app-level permission. The API AAR normally contributes this,
+         but declaring it explicitly prevents it from being stripped by
+         manifest processing on some build variants/devices. -->
+    <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
+    <uses-permission android:name="moe.shizuku.privileged.api.permission.API_V23" />
+
+    <!-- Android 11+ package visibility for both current and legacy Shizuku
+         package names. QUERY_ALL_PACKAGES is also declared for automation. -->
+    <queries>
+        <package android:name="moe.shizuku.manager" />
+        <package android:name="moe.shizuku.privileged.api" />
+    </queries>
+
     <uses-feature android:name="android.hardware.camera.flash" android:required="false" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
 
     <application
         android:name=".JarvisApp"
@@ -103,6 +118,28 @@
             android:screenOrientation="portrait"
             android:windowSoftInputMode="adjustResize" />
 
+        <activity
+            android:name=".ui.settings.McpSettingsActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity
+            android:name=".ui.settings.ShizukuSettingsActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize" />
+
+        <!-- Shizuku provider. The API permission is also declared above so
+             package/permission visibility stays stable across manifest merges. -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:enabled="true"
+            android:exported="true"
+            android:multiprocess="false"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+
         <service
             android:name=".background.JarvisConversationService"
             android:exported="false"
@@ -120,6 +157,34 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/accessibility_service_config" />
         </service>
+
+        <!--
+            Native wake-word + floating-orb add-on.
+
+            This is a separate system-bound assistant service. It does not
+            create a foreground notification, does not modify /system or
+            /vendor, and does not alter the existing Jarvis conversational /
+            accessibility / Shizuku / MCP / command pipeline. Wake detection is
+            Sherpa-ONNX; Vosk is retained only for speaker biometrics.
+        -->
+        <service
+            android:name=".JarvisVoiceInteractionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION"
+            android:stopWithTask="false">
+            <intent-filter>
+                <action android:name="android.service.voice.VoiceInteractionService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.voice_interaction"
+                android:resource="@xml/voice_interaction_service" />
+        </service>
+
+        <service
+            android:name=".voice.JarvisVoiceInteractionSessionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION"
+            android:stopWithTask="false" />
 
     </application>
 

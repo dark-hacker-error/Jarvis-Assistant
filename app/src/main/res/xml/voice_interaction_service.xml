@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Native assistant metadata for the wake-word + floating-orb add-on.
+
+    The system binds this service only when the user selects Jarvis as the
+    device assistant (or when the KernelSU helper writes the secure setting).
+    It is intentionally independent from JarvisConversationService: this module
+    never creates a foreground notification and never changes the existing
+    accessibility / Shizuku / MCP / command pipeline. Wake detection is
+    Sherpa-ONNX; Vosk is retained only for speaker biometrics.
+-->
+<voice-interaction-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:sessionService="com.jarvis.assistant/.JarvisVoiceInteractionSessionService"
+    android:supportsAssist="true"
+    android:supportsLaunchVoiceAssistFromKeyguard="true"
+    android:supportsLocalInteraction="true" />

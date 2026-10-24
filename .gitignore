@@ -1,0 +1,25 @@
+# Gradle / build outputs
+.gradle/
+build/
+app/build/
+.kotlin/
+captures/
+
+# Local machine configuration (contains SDK paths, never commit)
+local.properties
+
+# IDE files
+.idea/
+*.iml
+*.hprof
+.DS_Store
+
+# Signing material — never commit keystores or passwords
+*.jks
+*.keystore
+keystore.properties
+signing.properties
+
+# Logs and temporary files
+*.log
+*.tmp

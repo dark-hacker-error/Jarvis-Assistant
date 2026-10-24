@@ -78,7 +78,7 @@
             android:id="@+id/tvGreeting"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Welcome, Rehaan"
+            android:text="Welcome, Roshan Hacker"
             android:textColor="?attr/themeTextPrimary"
             android:textSize="14sp"
             android:textStyle="bold"
@@ -126,56 +126,36 @@
             android:background="@android:color/transparent" />
     </FrameLayout>
 
-    <!-- Sleek Futuristic Status Pill -->
+    <!-- Minimal status row: intentionally transparent, no card/pill. -->
     <LinearLayout
         android:id="@+id/layoutStatusIndicator"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:gravity="center"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
         android:layout_marginBottom="22dp"
         app:layout_constraintBottom_toTopOf="@id/cardWeather"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
-        <LinearLayout
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:background="@drawable/bg_jarvis_status_badge"
-            android:paddingHorizontal="16dp"
-            android:paddingVertical="8dp">
-
-            <View
-                android:id="@+id/dotStatusGlow"
-                android:layout_width="8dp"
-                android:layout_height="8dp"
-                android:background="@drawable/bg_jarvis_mic_center"
-                android:backgroundTint="?attr/themeAccent" />
-
-            <TextView
-                android:id="@+id/tvListeningStatus"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="TAP ORB TO START"
-                android:textColor="?attr/themeTextPrimary"
-                android:textSize="12sp"
-                android:letterSpacing="0.10"
-                android:textStyle="bold"
-                android:fontFamily="sans-serif-medium"
-                android:layout_marginStart="8dp" />
-        </LinearLayout>
+        <View
+            android:id="@+id/dotStatusGlow"
+            android:layout_width="8dp"
+            android:layout_height="8dp"
+            android:background="@drawable/bg_jarvis_mic_center"
+            android:backgroundTint="?attr/themeAccent" />
 
         <TextView
-            android:id="@+id/tvHoldHint"
+            android:id="@+id/tvListeningStatus"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Hold button or orb to power off"
-            android:textColor="?attr/themeTextMuted"
-            android:textSize="10sp"
-            android:fontFamily="sans-serif"
-            android:layout_marginTop="5dp" />
+            android:text="TAP TO START"
+            android:textColor="?attr/themeTextPrimary"
+            android:textSize="12sp"
+            android:letterSpacing="0.10"
+            android:textStyle="bold"
+            android:fontFamily="sans-serif-medium"
+            android:layout_marginStart="8dp" />
     </LinearLayout>
 
     <!-- Weather Widget Card -->
@@ -193,7 +173,7 @@
         android:clickable="true"
         android:focusable="true"
         android:layout_marginBottom="24dp"
-        app:layout_constraintBottom_toTopOf="@id/layoutActionGrid"
+        app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
@@ -246,173 +226,6 @@
             app:tint="?attr/themeAccent"
             android:contentDescription="Weather"
             android:layout_marginStart="8dp" />
-    </LinearLayout>
-
-    <!-- Quick Action Grid (3 Modern High-Tech Cards) -->
-    <LinearLayout
-        android:id="@+id/layoutActionGrid"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:layout_marginBottom="12dp"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
-
-        <!-- 1. Screen Share -->
-        <LinearLayout
-            android:id="@+id/btnScreenShareQuick"
-            android:layout_width="0dp"
-            android:layout_height="66dp"
-            android:layout_weight="1"
-            android:layout_marginEnd="6dp"
-            android:background="@drawable/bg_jarvis_action_card"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:paddingStart="10dp"
-            android:paddingEnd="6dp"
-            android:clickable="true"
-            android:focusable="true"
-            android:contentDescription="Start or stop screen sharing">
-
-            <ImageView
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:src="@drawable/ic_screen_share"
-                app:tint="?attr/themeAccent"
-                android:layout_marginEnd="8dp" />
-
-            <LinearLayout
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:orientation="vertical">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Screen"
-                    android:textColor="?attr/themeTextPrimary"
-                    android:textSize="12sp"
-                    android:textStyle="bold"
-                    android:fontFamily="sans-serif-medium"
-                    android:includeFontPadding="false" />
-
-                <TextView
-                    android:id="@+id/tvQuickScreenShareStatus"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Share"
-                    android:textColor="?attr/themeTextMuted"
-                    android:textSize="10sp"
-                    android:fontFamily="sans-serif"
-                    android:includeFontPadding="false"
-                    android:layout_marginTop="2dp" />
-            </LinearLayout>
-        </LinearLayout>
-
-        <!-- 2. Saved Memories -->
-        <LinearLayout
-            android:id="@+id/btnSavedMemories"
-            android:layout_width="0dp"
-            android:layout_height="66dp"
-            android:layout_weight="1"
-            android:layout_marginStart="6dp"
-            android:layout_marginEnd="6dp"
-            android:background="@drawable/bg_jarvis_action_card"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:paddingStart="10dp"
-            android:paddingEnd="6dp"
-            android:clickable="true"
-            android:focusable="true">
-
-            <ImageView
-                android:layout_width="20dp"
-                android:layout_height="20dp"
-                android:src="@drawable/ic_stack_memory"
-                app:tint="?attr/themeAccent"
-                android:layout_marginEnd="6dp" />
-
-            <LinearLayout
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:orientation="vertical">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Memories"
-                    android:textColor="?attr/themeTextPrimary"
-                    android:textSize="12sp"
-                    android:textStyle="bold"
-                    android:fontFamily="sans-serif-medium"
-                    android:includeFontPadding="false" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Recall Core"
-                    android:textColor="?attr/themeTextMuted"
-                    android:textSize="10sp"
-                    android:fontFamily="sans-serif"
-                    android:includeFontPadding="false"
-                    android:layout_marginTop="2dp" />
-            </LinearLayout>
-        </LinearLayout>
-
-        <!-- 3. Conversation Language -->
-        <LinearLayout
-            android:id="@+id/btnConversationLanguageQuick"
-            android:layout_width="0dp"
-            android:layout_height="66dp"
-            android:layout_weight="1"
-            android:layout_marginStart="6dp"
-            android:background="@drawable/bg_jarvis_action_card"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:paddingStart="10dp"
-            android:paddingEnd="6dp"
-            android:clickable="true"
-            android:focusable="true">
-
-            <ImageView
-                android:layout_width="22dp"
-                android:layout_height="22dp"
-                android:src="@drawable/ic_settings_language"
-                app:tint="?attr/themeAccent"
-                android:layout_marginEnd="6dp" />
-
-            <LinearLayout
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:orientation="vertical">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Language"
-                    android:textColor="?attr/themeTextPrimary"
-                    android:textSize="12sp"
-                    android:textStyle="bold"
-                    android:fontFamily="sans-serif-medium"
-                    android:includeFontPadding="false" />
-
-                <TextView
-                    android:id="@+id/tvQuickLanguageStatus"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Auto"
-                    android:textColor="?attr/themeTextMuted"
-                    android:textSize="10sp"
-                    android:fontFamily="sans-serif"
-                    android:singleLine="true"
-                    android:maxLines="1"
-                    android:ellipsize="end"
-                    android:includeFontPadding="false"
-                    android:layout_marginTop="2dp" />
-            </LinearLayout>
-        </LinearLayout>
-
     </LinearLayout>
 
     <!-- Prominent Actionable Error Card Overlay (Floats Upon Orb) -->

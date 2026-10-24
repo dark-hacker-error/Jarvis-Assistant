@@ -21,7 +21,6 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.jarvis.assistant.JarvisApp
 import com.jarvis.assistant.data.model.ConversationState
 import com.jarvis.assistant.databinding.FragmentHomeBinding
-import com.jarvis.assistant.ui.memory.MemoryActivity
 import com.jarvis.assistant.util.LocationWeatherHelper
 import com.jarvis.assistant.util.PermissionHelper
 import android.content.res.ColorStateList
@@ -88,19 +87,6 @@ class HomeFragment : Fragment() {
         }
 
         setupOrbWebView()
-
-        // Action Buttons
-        binding.btnScreenShareQuick.setOnClickListener {
-            (activity as? MainActivity)?.toggleScreenShare()
-        }
-
-        binding.btnSavedMemories.setOnClickListener {
-            startActivity(Intent(requireContext(), MemoryActivity::class.java))
-        }
-
-        binding.btnConversationLanguageQuick.setOnClickListener {
-            showLanguageDialog()
-        }
 
         // Weather Card Click -> Refresh or Request Permission
         binding.cardWeather.setOnClickListener {
@@ -290,7 +276,7 @@ class HomeFragment : Fragment() {
 
     private fun updateHomeHeaderAndVoiceStatus() {
         if (_binding == null) return
-        val userName = preferences.userName.ifBlank { "Rehaan" }
+        val userName = preferences.userName.ifBlank { "Roshan Hacker" }
         val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
         val timeGreeting = when (hour) {
             in 4..11 -> "Good morning"
@@ -299,26 +285,6 @@ class HomeFragment : Fragment() {
             else -> "Welcome back"
         }
         binding.tvGreeting.text = "$timeGreeting, $userName"
-
-        val currentLang = preferences.language.ifBlank { "Auto" }
-        binding.tvQuickLanguageStatus.text = if (currentLang.contains("Auto", ignoreCase = true)) "Auto" else currentLang
-    }
-
-    private fun showLanguageDialog() {
-        val languages = com.jarvis.assistant.data.model.GeminiConstants.SUPPORTED_LANGUAGES.toTypedArray()
-        val currentLang = preferences.language
-        val currentIndex = languages.indexOfFirst { it.equals(currentLang, ignoreCase = true) }.let { if (it >= 0) it else 0 }
-
-        com.google.android.material.dialog.MaterialAlertDialogBuilder(requireContext())
-            .setTitle("Select Conversation Language")
-            .setSingleChoiceItems(languages, currentIndex) { dialog, which ->
-                val chosen = languages[which]
-                preferences.language = chosen
-                binding.tvQuickLanguageStatus.text = chosen
-                dialog.dismiss()
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
     }
 
     private fun observeViewModel() {
@@ -329,22 +295,6 @@ class HomeFragment : Fragment() {
                         renderTaskFallback(snapshot)
                     }
                 }
-                launch {
-                    val screenCapture = com.jarvis.assistant.vision.ScreenCaptureManager.getInstance()
-                    combine(screenCapture.isSharing, screenCapture.hasReceivedFrame) { sharing, hasFrame -> sharing to hasFrame }
-                        .collect { (sharing, hasFrame) ->
-                        binding.tvQuickScreenShareStatus.text = when {
-                            !sharing -> "Share screen"
-                            !hasFrame -> "Starting…"
-                            else -> "Stop sharing"
-                        }
-                        binding.tvQuickScreenShareStatus.setTextColor(
-                            if (sharing && hasFrame) Color.parseColor("#10B981")
-                            else ContextCompat.getColor(requireContext(), R.color.text_subtle)
-                        )
-                    }
-                }
-
                 launch {
                     combine(
                         viewModel.isSessionOn,
@@ -358,64 +308,53 @@ class HomeFragment : Fragment() {
                             setOrbState("idle")
                             binding.tvListeningStatus.text = "JARVIS OFF • TAP TO START"
                             binding.tvListeningStatus.setTextColor(ContextCompat.getColor(requireContext(), R.color.text_subtle))
-                            binding.tvHoldHint.text = "Tap mic or orb to power on"
-                            binding.tvHoldHint.visibility = View.VISIBLE
                             binding.dotStatusGlow.backgroundTintList = ColorStateList.valueOf(
                                 Color.parseColor("#64748B")
                             )
                         } else if (status.isMuted) {
                             setOrbState("idle")
-                            binding.tvListeningStatus.text = "MIC MUTED (OFF) • TAP TO TALK"
+                            binding.tvListeningStatus.text = "MIC MUTED • TAP TO TALK"
                             binding.tvListeningStatus.setTextColor(Color.parseColor("#EF4444"))
-                            binding.tvHoldHint.text = "Microphone is muted • Tap mic to unmute"
-                            binding.tvHoldHint.visibility = View.VISIBLE
                             binding.dotStatusGlow.backgroundTintList = ColorStateList.valueOf(
                                 Color.parseColor("#EF4444")
                             )
                         } else if (status.isStandby) {
                             setOrbState("idle")
-                            binding.tvListeningStatus.text = "STANDBY • SAY 'HEY JARVIS'"
+                            binding.tvListeningStatus.text = "STANDBY • HEY JARVIS"
                             binding.tvListeningStatus.setTextColor(Color.parseColor("#3B82F6"))
-                            binding.tvHoldHint.text = "Listening for wake word • Hold mic to power off"
-                            binding.tvHoldHint.visibility = View.VISIBLE
                             binding.dotStatusGlow.backgroundTintList = ColorStateList.valueOf(
                                 Color.parseColor("#3B82F6")
                             )
                         } else {
-                            binding.tvHoldHint.visibility = View.VISIBLE
                             when (status.state) {
                                 ConversationState.LISTENING -> {
                                     setOrbState("listening")
-                                    binding.tvListeningStatus.text = "MIC ON • LISTENING..."
+                                    binding.tvListeningStatus.text = "LISTENING"
                                     binding.tvListeningStatus.setTextColor(Color.parseColor("#10B981"))
-                                    binding.tvHoldHint.text = "Speak now • Tap to mute • Hold to power off"
                                     binding.dotStatusGlow.backgroundTintList = ColorStateList.valueOf(
                                         Color.parseColor("#10B981")
                                     )
                                 }
                                 ConversationState.SPEAKING -> {
                                     setOrbState("speaking")
-                                    binding.tvListeningStatus.text = "JARVIS SPEAKING..."
+                                    binding.tvListeningStatus.text = "SPEAKING"
                                     binding.tvListeningStatus.setTextColor(Color.parseColor("#06B6D4"))
-                                    binding.tvHoldHint.text = "Tap mic to interrupt"
                                     binding.dotStatusGlow.backgroundTintList = ColorStateList.valueOf(
                                         Color.parseColor("#06B6D4")
                                     )
                                 }
                                 ConversationState.THINKING -> {
                                     setOrbState("thinking")
-                                    binding.tvListeningStatus.text = "THINKING..."
+                                    binding.tvListeningStatus.text = "THINKING"
                                     binding.tvListeningStatus.setTextColor(Color.parseColor("#F59E0B"))
-                                    binding.tvHoldHint.text = "Processing request..."
                                     binding.dotStatusGlow.backgroundTintList = ColorStateList.valueOf(
                                         Color.parseColor("#F59E0B")
                                     )
                                 }
                                 ConversationState.IDLE -> {
                                     setOrbState("idle")
-                                    binding.tvListeningStatus.text = "MIC ON • READY"
+                                    binding.tvListeningStatus.text = "READY"
                                     binding.tvListeningStatus.setTextColor(Color.parseColor("#10B981"))
-                                    binding.tvHoldHint.text = "Tap to mute • Hold to power off"
                                     binding.dotStatusGlow.backgroundTintList = ColorStateList.valueOf(
                                         Color.parseColor("#10B981")
                                     )
@@ -592,9 +531,13 @@ class HomeFragment : Fragment() {
 
     private fun renderTaskFallback(snapshot: com.jarvis.assistant.automation.agent.AgentTaskSnapshot?) {
         val panel = taskFallbackPanel ?: return
-        val show = snapshot != null && !android.provider.Settings.canDrawOverlays(requireContext())
+        if (snapshot == null) {
+            panel.visibility = View.GONE
+            return
+        }
+        val show = !android.provider.Settings.canDrawOverlays(requireContext())
         panel.visibility = if (show) View.VISIBLE else View.GONE
-        if (!show || snapshot == null) return
+        if (!show) return
         val activeStep = snapshot.steps.firstOrNull { it.stepId == snapshot.currentStepId }?.title ?: snapshot.currentStatus
         val checklist = snapshot.steps.take(4).joinToString("\n") { step ->
             val mark = if (step.status == com.jarvis.assistant.automation.agent.TaskStepStatus.COMPLETED) "✓" else "○"

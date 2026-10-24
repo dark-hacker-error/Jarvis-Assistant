@@ -66,15 +66,20 @@ object OwnerVoiceManager {
         if (vectors.isEmpty()) return null
         val dim = vectors[0].size
         val avg = FloatArray(dim)
+        var validCount = 0
 
         for (vec in vectors) {
             if (vec.size != dim) continue
+            validCount++
             for (i in 0 until dim) {
                 avg[i] += vec[i]
             }
         }
 
-        val count = vectors.size.toFloat()
+        // Divide only by vectors that were actually accumulated. Dividing by the
+        // full list size shrinks the centroid whenever a mismatched sample exists.
+        if (validCount == 0) return null
+        val count = validCount.toFloat()
         for (i in 0 until dim) {
             avg[i] /= count
         }

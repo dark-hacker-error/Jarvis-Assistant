@@ -17,9 +17,11 @@ import com.jarvis.assistant.JarvisApp
 import com.jarvis.assistant.R
 import com.jarvis.assistant.data.model.GeminiConstants
 import com.jarvis.assistant.databinding.FragmentSettingsBinding
+import com.jarvis.assistant.ui.home.MainActivity
 import com.jarvis.assistant.ui.memory.MemoryActivity
 import com.jarvis.assistant.ui.permission.PermissionActivity
 import com.jarvis.assistant.ui.voice.VoiceEnrollmentActivity
+import com.jarvis.assistant.util.SocialLinks
 
 class SettingsFragment : Fragment() {
 
@@ -64,7 +66,7 @@ class SettingsFragment : Fragment() {
     }
 
     private fun loadUserData() {
-        val userName = preferences.userName.ifBlank { "Rehaan" }
+        val userName = preferences.userName.ifBlank { "Roshan Hacker" }
         binding.tvProfileName.text = userName
         binding.tvProfileSubtitle.text = "JARVIS OPERATOR • PRIMARY USER"
 
@@ -120,6 +122,23 @@ class SettingsFragment : Fragment() {
             "custom" -> "Custom (${preferences.customThemeColor})"
             else -> "Light Theme"
         }
+
+        binding.tvBottomNavStyle.text = when (preferences.bottomNavStyle) {
+            "classic" -> "Classic"
+            else -> "Glass (iPhone)"
+        }
+
+        // MCP + Shizuku status. These are additive extensions; when Shizuku is
+        // missing the rest of the settings screen remains fully usable.
+        val app = JarvisApp.instance
+        val enabledServers = app.mcpManager.enabledServerCount()
+        val enabledTools = app.mcpManager.enabledToolCount()
+        binding.tvMcpSummary.text = if (enabledServers == 0) {
+            "No MCP enabled • Tap to add tools"
+        } else {
+            "$enabledServers MCP(s) enabled • $enabledTools tools available"
+        }
+        binding.tvShizukuSummary.text = app.shizukuManager.statusText()
     }
 
     private fun setupClickListeners() {
@@ -173,9 +192,21 @@ class SettingsFragment : Fragment() {
             startActivity(Intent(requireContext(), HandsFreeActivity::class.java))
         }
 
+        binding.rowMcpTools.setOnClickListener {
+            startActivity(Intent(requireContext(), McpSettingsActivity::class.java))
+        }
+
+        binding.rowShizukuAccess.setOnClickListener {
+            startActivity(Intent(requireContext(), ShizukuSettingsActivity::class.java))
+        }
+
         // Section 3: Appearance & Security
         binding.rowAppTheme.setOnClickListener {
             ThemeSelectionBottomSheet.newInstance().show(childFragmentManager, ThemeSelectionBottomSheet.TAG)
+        }
+
+        binding.rowBottomNavStyle.setOnClickListener {
+            showBottomNavStyleDialog()
         }
 
         binding.rowPrivacyPolicy.setOnClickListener {
@@ -192,20 +223,35 @@ class SettingsFragment : Fragment() {
 
         // Social Media Community Buttons
         binding.btnSocialTelegram.setOnClickListener {
-            openUrl("https://t.me/+sYana61LvHdmZmE1")
+            openUrl(SocialLinks.TELEGRAM)
         }
 
         binding.btnSocialInstagram.setOnClickListener {
-            openUrl("https://www.instagram.com/techgptx.ai")
+            openUrl(SocialLinks.INSTAGRAM)
         }
 
-        binding.btnSocialYoutube.setOnClickListener {
-            openUrl("https://youtube.com/@TechGptX")
+        binding.btnSocialWebsite.setOnClickListener {
+            openUrl(SocialLinks.WEBSITE)
         }
 
         binding.tvFooterCredit.setOnClickListener {
-            openUrl("https://t.me/+sYana61LvHdmZmE1")
+            openUrl(SocialLinks.WEBSITE)
         }
+    }
+
+    private fun showBottomNavStyleDialog() {
+        val options = arrayOf("Glass (iPhone)", "Classic")
+        val selected = if (preferences.bottomNavStyle == "classic") 1 else 0
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle("Bottom Navigation Style")
+            .setSingleChoiceItems(options, selected) { dialog, which ->
+                preferences.bottomNavStyle = if (which == 1) "classic" else "glass"
+                binding.tvBottomNavStyle.text = options[which]
+                (activity as? MainActivity)?.applyBottomNavStyle()
+                dialog.dismiss()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun showLanguageDialog() {
@@ -242,7 +288,7 @@ class SettingsFragment : Fragment() {
 
     private fun showEditNameDialog() {
         val input = EditText(requireContext()).apply {
-            setText(preferences.userName.ifBlank { "Rehaan" })
+            setText(preferences.userName.ifBlank { "Roshan Hacker" })
             setSelection(text.length)
         }
         MaterialAlertDialogBuilder(requireContext())

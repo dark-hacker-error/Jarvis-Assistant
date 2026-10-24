@@ -490,7 +490,7 @@ class VisualTaskOrchestrator(
             }
             AgentTaskEngine.observe(latestSignature, pkg, groundingEngine.formatElementsSummary(latestElements, latestRoot))
             if (packageReady && !loading && latestRoot != null) {
-                if (latestSignature != null && latestSignature.isEquivalentTo(lastSignature)) stableSamples++ else stableSamples = 0
+                if (latestSignature?.isEquivalentTo(lastSignature) == true) stableSamples++ else stableSamples = 0
                 if (stableSamples >= 1) {
                     AgentTaskEngine.setState(AgentTaskEngine.State.VERIFYING)
                     return@withContext UiWaitResult(

@@ -62,6 +62,11 @@ object CommandParser {
 
         // 2. Disambiguation choice when multiple contacts match
         if (isAwaitingDisambiguation) {
+            // Allow the user to abandon the contact picker instead of being
+            // trapped until a valid name/number is spoken.
+            if (clean.matches(Regex("^(no|nope|cancel|don't|dont|never mind|stop|abort|nahi|mat karo|ruko|vaddu|oddu|vendaam|nako|thamba|naahi|mat kara).*"))) {
+                return ParsedCommandResult(JarvisCommand.ConfirmAction(false), 1.0f, "CANCEL")
+            }
             return ParsedCommandResult(JarvisCommand.DisambiguationChoice(clean), 0.95f, "DISAMBIGUATION")
         }
 

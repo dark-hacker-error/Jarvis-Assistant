@@ -35,7 +35,6 @@ class MainActivity : AppCompatActivity() {
         const val TAB_HOME = 0
         const val TAB_CHAT = 1
         const val TAB_SETTINGS = 2
-        const val TAB_UPDATES = 3
     }
 
     private lateinit var binding: ActivityMainBinding
@@ -43,10 +42,10 @@ class MainActivity : AppCompatActivity() {
     private var activeSnackbar: Snackbar? = null
 
     private var currentTab = TAB_HOME
+    private var appliedNavStyle = ""
     private val homeFragment by lazy { HomeFragment() }
     private val chatFragment by lazy { ChatFragment() }
     private val settingsFragment by lazy { SettingsFragment() }
-    private val updatesFragment by lazy { UpdatesFragment() }
 
     private val requestAudioPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -161,8 +160,10 @@ class MainActivity : AppCompatActivity() {
         }
 
         com.jarvis.assistant.util.ThemeManager.applyDynamicBackground(binding.rootMainLayout)
+        applyBottomNavStyle()
 
         currentTab = savedInstanceState?.getInt("CURRENT_TAB", TAB_HOME) ?: TAB_HOME
+        if (currentTab !in setOf(TAB_HOME, TAB_CHAT, TAB_SETTINGS)) currentTab = TAB_HOME
 
         // Clear any old restored fragments to prevent ghost overlapping
         val existingFragments = supportFragmentManager.fragments
@@ -174,18 +175,16 @@ class MainActivity : AppCompatActivity() {
             trans.commitNowAllowingStateLoss()
         }
 
-        // Add all 4 fragments fresh into container
+        // Add all 3 fragments fresh into container
         val trans = supportFragmentManager.beginTransaction()
             .add(R.id.fragmentContainer, homeFragment, "TAB_0")
             .add(R.id.fragmentContainer, chatFragment, "TAB_1")
             .add(R.id.fragmentContainer, settingsFragment, "TAB_2")
-            .add(R.id.fragmentContainer, updatesFragment, "TAB_3")
 
         val allTabs = listOf(
             TAB_HOME to homeFragment,
             TAB_CHAT to chatFragment,
-            TAB_SETTINGS to settingsFragment,
-            TAB_UPDATES to updatesFragment
+            TAB_SETTINGS to settingsFragment
         )
 
         allTabs.forEach { (tabId, frag) ->
@@ -229,13 +228,28 @@ class MainActivity : AppCompatActivity() {
             appliedCustomHex = prefs.customThemeColor
             recreate()
         }
+        if (appliedNavStyle != prefs.bottomNavStyle) applyBottomNavStyle()
+    }
+
+    /** Applies the user's bottom-navigation choice immediately. */
+    fun applyBottomNavStyle() {
+        val style = com.jarvis.assistant.JarvisApp.instance.preferences.bottomNavStyle
+        binding.bottomDock.setBackgroundResource(
+            if (style == "classic") R.drawable.bg_jarvis_dock
+            else R.drawable.bg_jarvis_dock_glass
+        )
+        binding.bottomDock.elevation = if (style == "classic") {
+            8f * resources.displayMetrics.density
+        } else {
+            18f * resources.displayMetrics.density
+        }
+        appliedNavStyle = style
     }
 
     private fun setupNavigationDock() {
         binding.tabHome.setOnClickListener { selectTab(TAB_HOME) }
         binding.tabChat.setOnClickListener { selectTab(TAB_CHAT) }
         binding.tabSettings.setOnClickListener { selectTab(TAB_SETTINGS) }
-        binding.tabUpdates.setOnClickListener { selectTab(TAB_UPDATES) }
 
         binding.tabMic.setOnClickListener {
             handleMicOrOrbClick()
@@ -254,8 +268,7 @@ class MainActivity : AppCompatActivity() {
         val tabs = listOf(
             TAB_HOME to homeFragment,
             TAB_CHAT to chatFragment,
-            TAB_SETTINGS to settingsFragment,
-            TAB_UPDATES to updatesFragment
+            TAB_SETTINGS to settingsFragment
         )
 
         val trans = supportFragmentManager.beginTransaction()
@@ -316,8 +329,7 @@ class MainActivity : AppCompatActivity() {
         val navItems = listOf(
             Triple(TAB_HOME, binding.pillTabHome, Pair(binding.ivTabHome, binding.tvTabHome)),
             Triple(TAB_CHAT, binding.pillTabChat, Pair(binding.ivTabChat, binding.tvTabChat)),
-            Triple(TAB_SETTINGS, binding.pillTabSettings, Pair(binding.ivTabSettings, binding.tvTabSettings)),
-            Triple(TAB_UPDATES, binding.pillTabUpdates, Pair(binding.ivTabUpdates, binding.tvTabUpdates))
+            Triple(TAB_SETTINGS, binding.pillTabSettings, Pair(binding.ivTabSettings, binding.tvTabSettings))
         )
 
         navItems.forEach { (tabId, pill, views) ->
@@ -325,15 +337,11 @@ class MainActivity : AppCompatActivity() {
             val (iv, tv) = views
             if (isSelected) {
                 pill.setBackgroundResource(R.drawable.bg_dock_item_active)
+                pill.animate().cancel()
                 pill.alpha = 0f
-                pill.scaleX = 0.88f
-                pill.scaleY = 0.88f
                 pill.animate()
                     .alpha(1f)
-                    .scaleX(1f)
-                    .scaleY(1f)
-                    .setDuration(240)
-                    .setInterpolator(android.view.animation.OvershootInterpolator(1.2f))
+                    .setDuration(180)
                     .start()
                 iv.imageTintList = ColorStateList.valueOf(activeTextColor)
                 tv.setTextColor(activeTextColor)
@@ -342,8 +350,6 @@ class MainActivity : AppCompatActivity() {
                 pill.animate().cancel()
                 pill.setBackgroundResource(0)
                 pill.alpha = 1f
-                pill.scaleX = 1f
-                pill.scaleY = 1f
                 iv.imageTintList = ColorStateList.valueOf(inactiveColor)
                 tv.setTextColor(inactiveColor)
                 tv.alpha = 0.75f
@@ -417,17 +423,9 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch {
-                    combine(viewModel.isMicMuted, viewModel.conversationState, viewModel.isSessionOn) { isMuted, state, isOn ->
-                        Triple(isMuted, state, isOn)
-                    }.collect { (isMuted, state, isOn) ->
-                        val tvAccent = android.util.TypedValue()
-                        theme.resolveAttribute(R.attr.themeAccent, tvAccent, true)
-                        val accentColor = if (tvAccent.data != 0) tvAccent.data else ContextCompat.getColor(this@MainActivity, R.color.accent_sapphire)
-
-                        val tvMuted = android.util.TypedValue()
-                        theme.resolveAttribute(R.attr.themeTextMuted, tvMuted, true)
-                        val inactiveColor = if (tvMuted.data != 0) tvMuted.data else ContextCompat.getColor(this@MainActivity, R.color.text_subtle)
-
+                    combine(viewModel.isMicMuted, viewModel.isSessionOn) { isMuted, isOn ->
+                        isMuted to isOn
+                    }.collect { (isMuted, isOn) ->
                         if (!isOn) {
                             binding.ivTabMic.setImageResource(R.drawable.ic_mic_jarvis)
                             binding.ivTabMic.imageTintList = ColorStateList.valueOf(android.graphics.Color.parseColor("#94A3B8"))
@@ -435,8 +433,6 @@ class MainActivity : AppCompatActivity() {
                             binding.pillTabMic.setBackgroundResource(R.drawable.bg_dock_mic_off)
                             binding.pillTabMic.animate().cancel()
                             binding.pillTabMic.alpha = 0.85f
-                            binding.pillTabMic.scaleX = 1f
-                            binding.pillTabMic.scaleY = 1f
                         } else if (isMuted) {
                             binding.ivTabMic.setImageResource(R.drawable.ic_mic_mute_jarvis)
                             binding.ivTabMic.imageTintList = ColorStateList.valueOf(android.graphics.Color.WHITE)
@@ -444,25 +440,15 @@ class MainActivity : AppCompatActivity() {
                             binding.pillTabMic.setBackgroundResource(R.drawable.bg_dock_mic_muted)
                             binding.pillTabMic.animate().cancel()
                             binding.pillTabMic.alpha = 1f
-                            binding.pillTabMic.scaleX = 1f
-                            binding.pillTabMic.scaleY = 1f
                         } else {
                             binding.ivTabMic.setImageResource(R.drawable.ic_mic_jarvis)
                             binding.ivTabMic.imageTintList = ColorStateList.valueOf(android.graphics.Color.WHITE)
                             binding.tvTabMic.setTextColor(android.graphics.Color.WHITE)
                             binding.pillTabMic.setBackgroundResource(R.drawable.bg_dock_mic_highlight)
                             binding.pillTabMic.alpha = 1f
-                            if (state == ConversationState.LISTENING || state == ConversationState.SPEAKING) {
-                                binding.pillTabMic.animate()
-                                    .scaleX(1.08f)
-                                    .scaleY(1.08f)
-                                    .setDuration(300)
-                                    .start()
-                            } else {
-                                binding.pillTabMic.animate().cancel()
-                                binding.pillTabMic.scaleX = 1f
-                                binding.pillTabMic.scaleY = 1f
-                            }
+                            binding.pillTabMic.animate().cancel()
+                            binding.pillTabMic.scaleX = 1f
+                            binding.pillTabMic.scaleY = 1f
                         }
                     }
                 }

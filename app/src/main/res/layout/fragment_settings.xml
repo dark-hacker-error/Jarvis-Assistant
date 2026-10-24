@@ -150,7 +150,7 @@
                             android:id="@+id/tvProfileName"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Rehaan"
+                            android:text="Roshan Hacker"
                             android:textColor="?attr/themeTextPrimary"
                             android:textSize="18sp"
                             android:fontFamily="sans-serif-medium"
@@ -883,6 +883,140 @@
                         app:tint="?attr/themeTextMuted"
                         android:contentDescription="Open" />
                 </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="?attr/themeCardBorder" />
+
+                <!-- Row 5: MCP Tools -->
+                <LinearLayout
+                    android:id="@+id/rowMcpTools"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:paddingTop="14dp"
+                    android:paddingBottom="14dp"
+                    android:background="@drawable/bg_jarvis_row_item"
+                    android:clickable="true"
+                    android:focusable="true">
+
+                    <FrameLayout
+                        android:layout_width="40dp"
+                        android:layout_height="40dp"
+                        android:background="@drawable/bg_jarvis_icon_square">
+
+                        <ImageView
+                            android:layout_width="22dp"
+                            android:layout_height="22dp"
+                            android:layout_gravity="center"
+                            android:src="@drawable/ic_code_chip"
+                            app:tint="?attr/themeAccent"
+                            android:contentDescription="MCP tools" />
+                    </FrameLayout>
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical"
+                        android:layout_marginStart="14dp">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="MCP Tools &amp; Servers"
+                            android:textColor="?attr/themeTextPrimary"
+                            android:textSize="15sp"
+                            android:fontFamily="sans-serif-medium"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/tvMcpSummary"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Enable free built-in MCPs or add custom servers"
+                            android:textColor="?attr/themeTextMuted"
+                            android:textSize="12sp"
+                            android:fontFamily="sans-serif"
+                            android:layout_marginTop="2dp" />
+                    </LinearLayout>
+
+                    <ImageView
+                        android:layout_width="18dp"
+                        android:layout_height="18dp"
+                        android:src="@drawable/ic_arrow_right"
+                        app:tint="?attr/themeTextMuted"
+                        android:contentDescription="Open" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="?attr/themeCardBorder" />
+
+                <!-- Row 6: Shizuku system access -->
+                <LinearLayout
+                    android:id="@+id/rowShizukuAccess"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:paddingTop="14dp"
+                    android:paddingBottom="14dp"
+                    android:background="@drawable/bg_jarvis_row_item"
+                    android:clickable="true"
+                    android:focusable="true">
+
+                    <FrameLayout
+                        android:layout_width="40dp"
+                        android:layout_height="40dp"
+                        android:background="@drawable/bg_jarvis_icon_square">
+
+                        <ImageView
+                            android:layout_width="22dp"
+                            android:layout_height="22dp"
+                            android:layout_gravity="center"
+                            android:src="@drawable/ic_settings_shield"
+                            app:tint="?attr/themeAccent"
+                            android:contentDescription="Shizuku" />
+                    </FrameLayout>
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical"
+                        android:layout_marginStart="14dp">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Shizuku System Access"
+                            android:textColor="?attr/themeTextPrimary"
+                            android:textSize="15sp"
+                            android:fontFamily="sans-serif-medium"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/tvShizukuSummary"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="ADB/root level controls • permission required"
+                            android:textColor="?attr/themeTextMuted"
+                            android:textSize="12sp"
+                            android:fontFamily="sans-serif"
+                            android:layout_marginTop="2dp" />
+                    </LinearLayout>
+
+                    <ImageView
+                        android:layout_width="18dp"
+                        android:layout_height="18dp"
+                        android:src="@drawable/ic_arrow_right"
+                        app:tint="?attr/themeTextMuted"
+                        android:contentDescription="Open" />
+                </LinearLayout>
             </LinearLayout>
 
             <!-- SECTION 3: APPEARANCE & SECURITY -->
@@ -954,6 +1088,73 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="Light Theme"
+                            android:textColor="?attr/themeTextMuted"
+                            android:textSize="12sp"
+                            android:fontFamily="sans-serif"
+                            android:layout_marginTop="2dp" />
+                    </LinearLayout>
+
+                    <ImageView
+                        android:layout_width="18dp"
+                        android:layout_height="18dp"
+                        android:src="@drawable/ic_arrow_right"
+                        app:tint="?attr/themeTextMuted"
+                        android:contentDescription="Open" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="?attr/themeCardBorder" />
+
+                <!-- Bottom Navigation Style -->
+                <LinearLayout
+                    android:id="@+id/rowBottomNavStyle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:paddingTop="14dp"
+                    android:paddingBottom="14dp"
+                    android:background="@drawable/bg_jarvis_row_item"
+                    android:clickable="true"
+                    android:focusable="true">
+
+                    <FrameLayout
+                        android:layout_width="40dp"
+                        android:layout_height="40dp"
+                        android:background="@drawable/bg_jarvis_icon_square">
+
+                        <ImageView
+                            android:layout_width="22dp"
+                            android:layout_height="22dp"
+                            android:layout_gravity="center"
+                            android:src="@drawable/ic_nav_home"
+                            app:tint="?attr/themeAccent"
+                            android:contentDescription="Bottom navigation style" />
+                    </FrameLayout>
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical"
+                        android:layout_marginStart="14dp">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Bottom Navigation"
+                            android:textColor="?attr/themeTextPrimary"
+                            android:textSize="15sp"
+                            android:fontFamily="sans-serif-medium"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/tvBottomNavStyle"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Glass (iPhone)"
                             android:textColor="?attr/themeTextMuted"
                             android:textSize="12sp"
                             android:fontFamily="sans-serif"
@@ -1125,13 +1326,13 @@
                     android:contentDescription="Instagram" />
 
                 <ImageButton
-                    android:id="@+id/btnSocialYoutube"
+                    android:id="@+id/btnSocialWebsite"
                     android:layout_width="48dp"
                     android:layout_height="48dp"
                     android:background="@drawable/bg_jarvis_icon_square"
-                    android:src="@drawable/ic_social_youtube"
+                    android:src="@drawable/ic_social_web"
                     app:tint="?attr/themeAccent"
-                    android:contentDescription="YouTube" />
+                    android:contentDescription="Website" />
             </LinearLayout>
 
             <!-- Footer: Executive Signature -->
@@ -1139,7 +1340,7 @@
                 android:id="@+id/tvFooterCredit"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="JARVIS INTELLIGENCE OS • v3.1 PRO\nEngineered by TechGPT X"
+                android:text="JARVIS INTELLIGENCE OS • v3.1 PRO\nEngineered by Roshan Hacker"
                 android:textColor="?attr/themeTextMuted"
                 android:textSize="12sp"
                 android:fontFamily="sans-serif-medium"

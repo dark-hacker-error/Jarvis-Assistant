@@ -32,6 +32,9 @@ class GeminiLiveWebSocket(
 
     companion object {
         private const val TAG = "GeminiLiveWebSocket"
+        private const val BASE_RECONNECT_DELAY_MS = 500L
+        private const val MAX_RECONNECT_DELAY_MS = 30_000L
+        private const val MAX_RECONNECT_BACKOFF_STEPS = 6
         // Shared OkHttpClient across all sessions — reuses connection pool, DNS cache, and TLS sessions
         private val sharedClient = OkHttpClient.Builder()
             .readTimeout(0, TimeUnit.MILLISECONDS)
@@ -57,6 +60,7 @@ class GeminiLiveWebSocket(
 
     private var sessionRenewalJob: Job? = null
     private var reconnectJob: Job? = null
+    @Volatile private var reconnectAttempts = 0
     var promptProvider: (() -> String)? = null
 
     fun isSessionReady(): Boolean = isConnected.get() && isSetupComplete.get()
@@ -64,6 +68,7 @@ class GeminiLiveWebSocket(
     fun connect(scope: CoroutineScope) {
         coroutineScope = scope
         isManuallyStopped.set(false)
+        reconnectAttempts = 0
         initiateConnection()
     }
 
@@ -164,18 +169,23 @@ class GeminiLiveWebSocket(
                     isSetupComplete.set(false)
                     stopTimers()
 
-                    val isApiKeyError = code == 400 || code == 401 || code == 403 ||
-                            errorMsg.contains("400") || errorMsg.contains("403") || errorMsg.contains("401") ||
-                            errorMsg.contains("API_KEY_INVALID", ignoreCase = true) ||
-                            errorMsg.contains("API key not valid", ignoreCase = true) ||
-                            (responseBody?.contains("API_KEY_INVALID", ignoreCase = true) == true) ||
-                            (responseBody?.contains("API key not valid", ignoreCase = true) == true)
-
+                    val combined = listOfNotNull(errorMsg, responseBody).joinToString(" ")
                     val isQuotaError = code == 429 ||
                             errorMsg.contains("429") ||
                             errorMsg.contains("RESOURCE_EXHAUSTED", ignoreCase = true) ||
                             errorMsg.contains("quota", ignoreCase = true) ||
                             (responseBody?.contains("RESOURCE_EXHAUSTED", ignoreCase = true) == true)
+
+                    // 400/404 are generic. Only explicit key markers or 401/403
+                    // should be reported as an invalid API key.
+                    val isApiKeyError = !isQuotaError && (
+                            code == 401 || code == 403 ||
+                            combined.contains("API_KEY_INVALID", ignoreCase = true) ||
+                            combined.contains("API key not valid", ignoreCase = true) ||
+                            combined.contains("API key expired", ignoreCase = true) ||
+                            combined.contains("API key is invalid", ignoreCase = true)
+                    )
+                    val isModelError = indicatesModelError(code, combined)
 
                     if (isApiKeyError) {
                         Log.e(TAG, "Fatal failure: Invalid API Key (HTTP $code: $errorMsg)")
@@ -187,6 +197,26 @@ class GeminiLiveWebSocket(
                     if (isQuotaError) {
                         Log.w(TAG, "Quota / rate limit hit (HTTP $code: $errorMsg). Retrying in cooldown...")
                         listener.onConnectionStateChanged("COOLDOWN • RETRYING")
+                        scheduleReconnect()
+                        return
+                    }
+
+                    if (isModelError) {
+                        if (fallbackModelIfPossible("HTTP $code: $combined")) {
+                            listener.onConnectionStateChanged("RECONNECTING...")
+                            return
+                        }
+                        listener.onError("Gemini model unavailable (HTTP $code): ${responseBody ?: errorMsg}", isFatal = true, errorCode = "MODEL_UNAVAILABLE")
+                        listener.onConnectionStateChanged("ERROR • MODEL UNAVAILABLE")
+                        return
+                    }
+
+                    if (code == 400) {
+                        // Keep the real reason visible (bad model name, bad setup
+                        // payload, region issue) instead of claiming a bad key.
+                        val reason = responseBody?.takeIf { it.isNotBlank() } ?: errorMsg
+                        listener.onError("Gemini rejected the request (HTTP 400): $reason", isFatal = false, errorCode = "BAD_REQUEST")
+                        listener.onConnectionStateChanged("RECONNECTING...")
                         scheduleReconnect()
                         return
                     }
@@ -643,6 +673,26 @@ class GeminiLiveWebSocket(
                             })
                         })
 
+                        // 22. execute_mcp_tool
+                        put(JSONObject().apply {
+                            put("name", "execute_mcp_tool")
+                            put("description", "Executes one of the user-enabled MCP tools listed in the system prompt. Use the exact tool ID. Tools marked CONFIRM or DANGEROUS will not execute immediately; they return requires_confirmation and the user must confirm locally. Never claim success before the result says success=true.")
+                            put("parameters", JSONObject().apply {
+                                put("type", "OBJECT")
+                                put("properties", JSONObject().apply {
+                                    put("tool", JSONObject().apply {
+                                        put("type", "STRING")
+                                        put("description", "Exact MCP tool ID from the enabled list, for example system_control:volume.")
+                                    })
+                                    put("arguments_json", JSONObject().apply {
+                                        put("type", "STRING")
+                                        put("description", "A JSON object encoded as a string, for example {\"level\":40,\"stream\":\"music\"}. Use {} when the tool has no arguments.")
+                                    })
+                                })
+                                put("required", JSONArray().put("tool"))
+                            })
+                        })
+
 
                     })
                 }))
@@ -663,20 +713,36 @@ class GeminiLiveWebSocket(
                 val errMsg = errObj?.optString("message", "") ?: json.optString("error", "Unknown error")
                 val errCode = errObj?.optInt("code", 0) ?: 0
                 Log.e(TAG, "Server returned error: code=$errCode, message=$errMsg")
-                val isApiKey = errMsg.contains("API_KEY_INVALID", ignoreCase = true) ||
-                               errMsg.contains("API key not valid", ignoreCase = true) ||
-                               errCode == 400 || errCode == 403
                 val isQuota = errMsg.contains("RESOURCE_EXHAUSTED", ignoreCase = true) ||
                               errMsg.contains("quota", ignoreCase = true) ||
                               errCode == 429
+                // HTTP 400 is a generic bad-request code. Only an explicit key
+                // marker (or 401/403) means the API key itself is invalid.
+                val isApiKey = errMsg.contains("API_KEY_INVALID", ignoreCase = true) ||
+                               errMsg.contains("API key not valid", ignoreCase = true) ||
+                               errMsg.contains("API key expired", ignoreCase = true) ||
+                               (!isQuota && (errCode == 401 || errCode == 403))
+                val isModelError = indicatesModelError(errCode, errMsg)
                 if (isApiKey) {
                     listener.onError("Invalid API Key: $errMsg", isFatal = true, errorCode = "API_KEY_INVALID")
                     listener.onConnectionStateChanged("ERROR • INVALID KEY")
                 } else if (isQuota) {
                     listener.onError("API Quota Exceeded: $errMsg", isFatal = true, errorCode = "QUOTA_EXCEEDED")
                     listener.onConnectionStateChanged("ERROR • QUOTA EXCEEDED")
+                } else if (isModelError) {
+                    if (fallbackModelIfPossible("HTTP $errCode: $errMsg")) {
+                        try {
+                            webSocket?.close(1000, "Retrying with fallback model")
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Could not close socket before model fallback: ${e.message}")
+                        }
+                    } else {
+                        listener.onError("Gemini model unavailable ($errCode): $errMsg", isFatal = true, errorCode = "MODEL_UNAVAILABLE")
+                        listener.onConnectionStateChanged("ERROR • MODEL UNAVAILABLE")
+                    }
                 } else {
-                    listener.onError("Gemini Error ($errCode): $errMsg", isFatal = false)
+                    // Surface the real server reason instead of blaming the key.
+                    listener.onError("Gemini Error ($errCode): $errMsg", isFatal = false, errorCode = "SERVER_ERROR")
                 }
                 return
             }
@@ -685,6 +751,7 @@ class GeminiLiveWebSocket(
             if (json.has("setupComplete")) {
                 Log.i(TAG, "Server acknowledged setup: setupComplete received. Session is now LIVE!")
                 if (!isSetupComplete.getAndSet(true)) {
+                    reconnectAttempts = 0
                     listener.onConnectionStateChanged("LIVE")
                     startSessionRenewal()
                 }
@@ -694,6 +761,7 @@ class GeminiLiveWebSocket(
             // Ensure session is marked ready if server sends content before explicit setupComplete
             if (!isSetupComplete.get() && (json.has("serverContent") || json.has("toolCall"))) {
                 isSetupComplete.set(true)
+                reconnectAttempts = 0
                 listener.onConnectionStateChanged("LIVE")
                 startSessionRenewal()
             }
@@ -906,9 +974,12 @@ class GeminiLiveWebSocket(
     /**
      * Sends a text prompt to Gemini Live using the client_content turn protocol.
      */
-    fun sendClientContent(text: String) {
-        if (!isConnected.get() || !isSetupComplete.get() || text.isBlank()) return
-        try {
+    fun sendClientContent(text: String): Boolean {
+        if (!isConnected.get() || !isSetupComplete.get() || text.isBlank()) {
+            Log.w(TAG, "sendClientContent skipped: Live session is not ready")
+            return false
+        }
+        return try {
             val msg = JSONObject().apply {
                 put("client_content", JSONObject().apply {
                     put("turns", JSONArray().put(JSONObject().apply {
@@ -920,10 +991,16 @@ class GeminiLiveWebSocket(
                     put("turn_complete", true)
                 })
             }
-            webSocket?.send(msg.toString())
-            Log.d(TAG, "Sent client_content: $text")
+            val sent = webSocket?.send(msg.toString()) == true
+            if (sent) {
+                Log.d(TAG, "Sent client_content: $text")
+            } else {
+                Log.w(TAG, "sendClientContent: socket rejected the payload, will retry after reconnect")
+            }
+            sent
         } catch (e: Exception) {
             Log.e(TAG, "sendClientContent failed: ${e.message}", e)
+            false
         }
     }
 
@@ -941,9 +1018,12 @@ class GeminiLiveWebSocket(
     private fun scheduleReconnect() {
         reconnectJob?.cancel()
         reconnectJob = coroutineScope?.launch(Dispatchers.IO) {
-            delay(500)
+            val attempt = reconnectAttempts.coerceAtMost(MAX_RECONNECT_BACKOFF_STEPS)
+            val delayMs = (BASE_RECONNECT_DELAY_MS shl attempt).coerceAtMost(MAX_RECONNECT_DELAY_MS)
+            if (reconnectAttempts < MAX_RECONNECT_BACKOFF_STEPS) reconnectAttempts++
+            Log.d(TAG, "Attempting auto-reconnect in ${delayMs}ms (attempt ${attempt + 1})")
+            delay(delayMs)
             if (!isManuallyStopped.get()) {
-                Log.d(TAG, "Attempting auto-reconnect...")
                 initiateConnection()
             }
         }
@@ -952,6 +1032,38 @@ class GeminiLiveWebSocket(
     private fun stopTimers() {
         sessionRenewalJob?.cancel()
         sessionRenewalJob = null
+        // An explicit stop must not be followed by a queued reconnect. Callers that
+        // intend to reconnect (onClosed/onFailure) schedule it after this method.
+        reconnectJob?.cancel()
+        reconnectJob = null
+    }
+
+    /** Detects model/setup failures hidden inside HTTP 400/404 responses. */
+    private fun indicatesModelError(code: Int, rawText: String?): Boolean {
+        if (code == 404) return true
+        val text = rawText?.lowercase().orEmpty()
+        if (text.isBlank()) return false
+        val mentionsModel = text.contains("model") || text.contains("bidigeneratecontent")
+        return mentionsModel && (
+            text.contains("not found") ||
+            text.contains("not supported") ||
+            text.contains("unsupported") ||
+            text.contains("does not support") ||
+            text.contains("invalid model")
+        )
+    }
+
+    /**
+     * Switches to the known-good Live model once. Returns true when a retry was
+     * scheduled, false when the fallback model also failed.
+     */
+    private fun fallbackModelIfPossible(reason: String): Boolean {
+        if (activeModel == GeminiConstants.MODEL_3_8_LIVE) return false
+        Log.w(TAG, "Model $activeModel unavailable ($reason). Falling back to ${GeminiConstants.MODEL_3_8_LIVE}")
+        activeModel = GeminiConstants.MODEL_3_8_LIVE
+        listener.onConnectionStateChanged("RECONNECTING...")
+        scheduleReconnect()
+        return true
     }
 
     fun disconnect() {

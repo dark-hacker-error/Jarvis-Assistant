@@ -145,6 +145,60 @@
                     app:backgroundTint="?attr/themeAccent" />
             </LinearLayout>
 
+            <!-- Native wake-word + floating orb add-on. Kept separate from the
+                 existing accessibility / Shizuku / MCP / Vosk command flow. -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/bg_jarvis_card"
+                android:padding="20dp"
+                android:layout_marginBottom="20dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="NATIVE WAKE + FLOATING ORB"
+                    android:textColor="?attr/themeAccent"
+                    android:textSize="11sp"
+                    android:letterSpacing="0.10"
+                    android:textStyle="bold"
+                    android:fontFamily="sans-serif-medium" />
+
+                <TextView
+                    android:id="@+id/tvNativeWakeStatus"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="CHECKING ASSISTANT STATUS..."
+                    android:textColor="?attr/themeTextPrimary"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:text="Say &quot;Jarvis&quot; anywhere, even after closing Recents. The orb and the wake listener use zero notifications. KernelSU is used only for official settings, cmd and appops commands."
+                    android:textColor="?attr/themeTextMuted"
+                    android:textSize="12sp"
+                    android:lineSpacingExtra="2dp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnActivateNativeWake"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="48dp"
+                    android:layout_marginTop="14dp"
+                    android:text="Activate Silent Wake (KernelSU)"
+                    android:textColor="#FFFFFF"
+                    android:textStyle="bold"
+                    android:textSize="13sp"
+                    android:textAllCaps="false"
+                    app:cornerRadius="14dp"
+                    app:backgroundTint="?attr/themeAccent" />
+            </LinearLayout>
+
             <!-- SECTION 1: HOW JARVIS WORKS (NON-DEVELOPER GUIDE) -->
             <TextView
                 android:layout_width="wrap_content"
@@ -758,7 +812,7 @@
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="@techgptx.ai"
+                            android:text="@roshan_king_x7"
                             android:textColor="?attr/themeTextMuted"
                             android:textSize="12sp" />
                     </LinearLayout>
@@ -778,7 +832,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:gravity="center"
-                android:text="JARVIS INTELLIGENCE OS • TECHGPT X\nAutonomous Hands-Free Architecture"
+                android:text="JARVIS INTELLIGENCE OS • ROSHAN HACKER\nAutonomous Hands-Free Architecture"
                 android:textColor="?attr/themeTextMuted"
                 android:textSize="11.5sp"
                 android:lineSpacingExtra="3dp" />
