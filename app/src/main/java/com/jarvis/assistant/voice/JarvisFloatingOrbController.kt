@@ -45,6 +45,8 @@ object JarvisFloatingOrbController {
 
     private var visualAttached = false
     private var hiding = false
+    private var orbVisible = false
+    private var currentMode = JarvisOrbView.Mode.LISTENING
 
     @Volatile
     private var tapCallback: (() -> Unit)? = null
@@ -54,10 +56,17 @@ object JarvisFloatingOrbController {
 
     fun isShowing(): Boolean = visualAttached
 
+    /** True only while the orb is actually revealed (Jarvis is speaking). */
+    fun isVisible(): Boolean = visualAttached && orbVisible
+
     /**
      * Show the listening/working orb. Must be safe to call from any thread; the
      * actual attach is posted to the main looper.
      *
+     * @param reveal when false the window is attached fully transparent and
+     *   without a touch target. Part 2 uses this so the orb can appear the
+     *   instant Jarvis starts speaking without paying the WindowManager
+     *   addView cost at that moment.
      * @return true when the visual overlay is (or is about to be) attached. A
      * false result means overlay permission is missing or WindowManager rejected
      * the window, in which case the caller can use the VoiceInteractionSession
@@ -67,13 +76,14 @@ object JarvisFloatingOrbController {
         context: Context,
         mode: JarvisOrbView.Mode = JarvisOrbView.Mode.LISTENING,
         onTap: (() -> Unit)? = null,
-        onLongPress: (() -> Unit)? = null
+        onLongPress: (() -> Unit)? = null,
+        reveal: Boolean = true
     ): Boolean {
         if (onTap != null) tapCallback = onTap
         if (onLongPress != null) longPressCallback = onLongPress
 
         if (Looper.myLooper() != Looper.getMainLooper()) {
-            mainHandler.post { show(context, mode, onTap, onLongPress) }
+            mainHandler.post { show(context, mode, onTap, onLongPress, reveal) }
             return visualAttached
         }
 
@@ -89,8 +99,10 @@ object JarvisFloatingOrbController {
 
         if (visualAttached) {
             hiding = false
+            currentMode = mode
             orbView?.setMode(mode)
             touchOverlay?.update(mode)
+            setVisible(reveal)
             return true
         }
 
@@ -138,23 +150,12 @@ object JarvisFloatingOrbController {
             visualParams = params
             visualAttached = true
             hiding = false
-
-            orb.animate()
-                .alpha(1f)
-                .translationY(0f)
-                .setDuration(300L)
-                .setInterpolator(android.view.animation.OvershootInterpolator(1.12f))
-                .start()
             orb.setMode(mode)
-
-            val touch = JarvisOrbTouchOverlay(
-                context = app,
-                onTap = { tapCallback?.invoke() },
-                onLongPress = { longPressCallback?.invoke() }
+            setVisible(reveal)
+            Log.i(
+                TAG,
+                "Floating orb attached on main looper (revealed=$reveal)"
             )
-            touchOverlay = touch
-            touch.show(mode)
-            Log.i(TAG, "Floating orb attached on main looper")
             true
         } catch (t: Throwable) {
             Log.e(TAG, "WindowManager.addView failed: ${t.message}", t)
@@ -162,8 +163,84 @@ object JarvisFloatingOrbController {
             visualRoot = null
             orbView = null
             visualParams = null
+            orbVisible = false
             false
         }
+    }
+
+    /**
+     * Reveals or conceals the already-attached orb. Concealing removes the
+     * touch target immediately and fades the visual to fully transparent, so
+     * the overlay is invisible and cannot swallow taps while Jarvis is quiet.
+     */
+    fun setVisible(visible: Boolean, animated: Boolean = true) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainHandler.post { setVisible(visible, animated) }
+            return
+        }
+        if (!visualAttached) return
+        if (visible == orbVisible && !hiding) {
+            if (visible) ensureTouchOverlay()
+            return
+        }
+
+        val orb = orbView ?: return
+        val root = visualRoot ?: return
+        hiding = false
+        orbVisible = visible
+
+        if (visible) {
+            ensureTouchOverlay()
+            orb.animate().cancel()
+            root.visibility = View.VISIBLE
+            orb.setVisibility(View.VISIBLE)
+            val anim = orb.animate()
+                .alpha(1f)
+                .translationY(0f)
+                .setDuration(if (animated) 140L else 0L)
+                .setInterpolator(android.view.animation.DecelerateInterpolator())
+            if (animated) {
+                anim.setInterpolator(android.view.animation.OvershootInterpolator(1.08f))
+            }
+            anim.start()
+        } else {
+            removeTouchOverlay()
+            orb.animate().cancel()
+            val anim = orb.animate()
+                .alpha(0f)
+                .translationY(JarvisOrbMetrics.dp(orb.context, 56f).toFloat())
+                .setDuration(if (animated) 220L else 0L)
+                .setInterpolator(android.view.animation.AccelerateInterpolator())
+            if (animated) {
+                anim.withEndAction {
+                    if (!orbVisible) {
+                        orb.setVisibility(View.INVISIBLE)
+                        root.visibility = View.INVISIBLE
+                    }
+                }
+            } else {
+                orb.setVisibility(View.INVISIBLE)
+                root.visibility = View.INVISIBLE
+            }
+            anim.start()
+        }
+    }
+
+    private fun ensureTouchOverlay() {
+        if (touchOverlay != null) return
+        val app = appContext ?: return
+        val touch = JarvisOrbTouchOverlay(
+            context = app,
+            onTap = { tapCallback?.invoke() },
+            onLongPress = { longPressCallback?.invoke() }
+        )
+        touchOverlay = touch
+        touch.show(currentMode)
+    }
+
+    private fun removeTouchOverlay() {
+        touchOverlay?.remove()
+        touchOverlay = null
     }
 
     fun update(
@@ -176,6 +253,7 @@ object JarvisFloatingOrbController {
             return
         }
         if (!visualAttached) return
+        currentMode = mode
         orbView?.setMode(mode, status)
         if (status != null) orbView?.setWorkingStatus(status)
         if (amplitude != null) orbView?.setAmplitude(amplitude)
@@ -205,6 +283,7 @@ object JarvisFloatingOrbController {
             return
         }
         hiding = true
+        orbVisible = false
         touchOverlay?.remove()
         touchOverlay = null
 
@@ -249,6 +328,7 @@ object JarvisFloatingOrbController {
         visualRoot = null
         orbView = null
         visualParams = null
+        orbVisible = false
         if (wm != null && root != null) {
             try {
                 wm.removeView(root)

@@ -2,6 +2,9 @@ package com.jarvis.assistant.data.memory
 
 import com.jarvis.assistant.data.backup.BackupTriggers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -13,6 +16,18 @@ class MemoryRepository(private val memoryDao: MemoryDao) {
      * fire at nearly the same time.
      */
     private val writeMutex = Mutex()
+
+    /**
+     * Bumped after every write. Live conversations observe this so a memory
+     * saved from the Memory screen or a "yaad rakho" command becomes known to
+     * the running Gemini session without reconnecting it.
+     */
+    private val _revision = MutableStateFlow(0L)
+    val revision: StateFlow<Long> = _revision.asStateFlow()
+
+    private fun bumpRevision() {
+        _revision.value = _revision.value + 1
+    }
 
     fun getAllMemoriesFlow(): Flow<List<MemoryEntity>> = memoryDao.getAllMemoriesFlow()
 
@@ -63,6 +78,7 @@ class MemoryRepository(private val memoryDao: MemoryDao) {
                         timestamp = System.currentTimeMillis()
                     )
                 )
+                bumpRevision()
                 BackupTriggers.request("memory-update")
                 return@withLock existing.id
             }
@@ -75,6 +91,7 @@ class MemoryRepository(private val memoryDao: MemoryDao) {
             rawText = cleanRaw
         )
         val id = memoryDao.insertMemory(entity)
+        bumpRevision()
         BackupTriggers.request("memory-save")
         id
     }
@@ -83,6 +100,7 @@ class MemoryRepository(private val memoryDao: MemoryDao) {
         writeMutex.withLock {
             memoryDao.updateMemory(memory)
         }
+        bumpRevision()
         BackupTriggers.request("memory-update")
     }
 
@@ -90,6 +108,7 @@ class MemoryRepository(private val memoryDao: MemoryDao) {
         writeMutex.withLock {
             memoryDao.deleteMemoryById(id)
         }
+        bumpRevision()
         BackupTriggers.request("memory-delete")
     }
 
@@ -97,7 +116,10 @@ class MemoryRepository(private val memoryDao: MemoryDao) {
         val deleted = writeMutex.withLock {
             memoryDao.deleteMemoriesByKeyword(keyword)
         }
-        if (deleted > 0) BackupTriggers.request("memory-delete")
+        if (deleted > 0) {
+            bumpRevision()
+            BackupTriggers.request("memory-delete")
+        }
         return deleted
     }
 
@@ -105,6 +127,7 @@ class MemoryRepository(private val memoryDao: MemoryDao) {
         writeMutex.withLock {
             memoryDao.clearAllMemories()
         }
+        bumpRevision()
         BackupTriggers.request("memory-clear")
     }
 

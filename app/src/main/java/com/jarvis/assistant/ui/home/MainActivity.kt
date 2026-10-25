@@ -233,14 +233,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Starts Part 1 from the foreground when the user has enabled it and the
-     * owner-voice prerequisite is satisfied. Safe to call on every resume.
+     * Starts Part 1 from the foreground when the user has enabled it.
+     *
+     * A missing owner-voice profile must never disable the wake word. The
+     * service runs in keyword-only mode in that case and starts enforcing
+     * owner verification as soon as enrollment completes.
      */
     private fun maybeStartUltraLightWake() {
         val prefs = com.jarvis.assistant.JarvisApp.instance.preferences
         if (!prefs.isWakeServiceEnabled) return
         if (!PermissionHelper.hasRecordAudioPermission(this)) return
-        if (prefs.isOwnerVoiceEnabled && !prefs.hasAnyOwnerVoiceProfile()) return
         com.jarvis.assistant.wake.WakeContract.start(this)
     }
 

@@ -58,13 +58,16 @@ class WakeWordService : Service() {
         private const val TAG = "WakeWordService"
 
         private const val WAKE_COOLDOWN_MS = 1_200L
-        private const val VERIFY_AUDIO_MS = 2_400
+        private const val VERIFY_AUDIO_MS = 2_800
         private const val SESSION_POLL_MS = 15_000L
         private const val SESSION_MISS_LIMIT = 2
         private const val RESUME_DELAY_MS = 700L
         private const val WAKE_LOCK_TIMEOUT_MS = 6 * 60 * 60 * 1000L
         private const val WAKE_LOCK_RENEW_MS = 5 * 60 * 60 * 1000L
-        private const val SPEAKER_IDLE_RELEASE_MS = 90_000L
+        // Keep the 28 MB WeSpeaker model resident for the whole wake session.
+        // Reloading it on the first "Jarvis" was the main source of a multi-
+        // second verification delay. It is released on service destroy.
+        private const val SPEAKER_IDLE_RELEASE_MS = 30 * 60 * 1000L
     }
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -192,12 +195,33 @@ class WakeWordService : Service() {
             VoskModelManager.initSpeakerOnly(applicationContext, serviceScope)
         }
 
+        // Warm the WeSpeaker model now, in parallel with the keyword spotter,
+        // so the first accepted "Jarvis" only pays for embedding inference.
+        if (prefs.hasSherpaVoiceProfile()) {
+            serviceScope.launch(Dispatchers.Default) {
+                val startedAt = SystemClock.elapsedRealtime()
+                SherpaSpeakerVerifier.preload(applicationContext)
+                Log.i(
+                    TAG,
+                    "WeSpeaker preload finished in " +
+                        "${SystemClock.elapsedRealtime() - startedAt} ms"
+                )
+            }
+        } else if (prefs.isOwnerVoiceEnabled) {
+            Log.i(
+                TAG,
+                "Owner voice is enabled but no profile exists; " +
+                    "wake runs in keyword-only mode until enrollment"
+            )
+        }
+
         if (wakeEngine == null) {
             wakeEngine = SherpaOnnxWakeWordEngine(
                 context = applicationContext,
                 scope = serviceScope,
                 onWakeWord = { onWakeCandidate() },
-                useBusHandoff = false
+                useBusHandoff = false,
+                preferRawMic = true
             )
         }
 

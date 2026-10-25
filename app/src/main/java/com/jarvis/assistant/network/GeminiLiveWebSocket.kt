@@ -1004,6 +1004,45 @@ class GeminiLiveWebSocket(
         }
     }
 
+    /**
+     * Injects fresh context (for example an updated memory snapshot) into the
+     * running Live session without requesting a model turn.
+     *
+     * [sendClientContent] always sets `turn_complete = true`, which makes the
+     * model answer immediately and would cut off an in-flight reply. This path
+     * leaves `turn_complete = false`, so the text becomes part of the next
+     * user turn's context instead.
+     */
+    fun sendContextUpdate(text: String): Boolean {
+        if (!isConnected.get() || !isSetupComplete.get() || text.isBlank()) {
+            Log.w(TAG, "sendContextUpdate skipped: Live session is not ready")
+            return false
+        }
+        return try {
+            val msg = JSONObject().apply {
+                put("client_content", JSONObject().apply {
+                    put("turns", JSONArray().put(JSONObject().apply {
+                        put("role", "user")
+                        put("parts", JSONArray().put(JSONObject().apply {
+                            put("text", text)
+                        }))
+                    }))
+                    put("turn_complete", false)
+                })
+            }
+            val sent = webSocket?.send(msg.toString()) == true
+            if (sent) {
+                Log.i(TAG, "Sent silent context update (${text.length} chars)")
+            } else {
+                Log.w(TAG, "sendContextUpdate: socket rejected the payload")
+            }
+            sent
+        } catch (e: Exception) {
+            Log.e(TAG, "sendContextUpdate failed: ${e.message}", e)
+            false
+        }
+    }
+
     private fun startSessionRenewal() {
         sessionRenewalJob?.cancel()
         sessionRenewalJob = coroutineScope?.launch(Dispatchers.IO) {

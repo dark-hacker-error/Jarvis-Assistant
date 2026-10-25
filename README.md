@@ -9,7 +9,7 @@ An Android voice assistant built with Kotlin, Gemini Live, on-device voice compo
 - Minimum Android version: Android 8.0 (API 26)
 - Compile and target SDK: 34
 - Java/Kotlin target: 17
-- Current app version: 1.9.0 (version code 144)
+- Current app version: 1.9.1 (version code 145)
 
 ## Getting started
 
@@ -30,15 +30,22 @@ word stays available:
   with a WeSpeaker CAM++ embedding on the same 16 kHz buffer. Room, TTS, Gemini,
   MCP, Shizuku, backup and the large Vosk ASR model are never loaded there.
 - **Part 2 (main process)** starts only after both the keyword and the owner
-  voice match. It shows a bottom-centre floating orb instead of opening
-  `MainActivity`, then hands the microphone back to Part 1 when the
-  conversation ends.
+  voice match. It attaches a fully transparent bottom-centre orb and reveals it
+  only while Jarvis is speaking (or while the user is actively talking), instead
+  of opening `MainActivity`. When the conversation ends it hands the microphone
+  back to Part 1.
 
 No API key, account or usage limit is involved in wake detection. Enable it in
-**Settings → Hands-free**, enroll the owner voice once, and grant microphone,
-notification and "Display over other apps" permissions. The wake service
-restarts after reboot; some Android 14+ builds block a background microphone
-start, in which case a notification asks you to open Jarvis once.
+**Settings → Hands-free** and grant microphone, notification and "Display over
+other apps" permissions. Enrolling the owner voice is strongly recommended: the
+wake service runs in keyword-only mode until a profile exists, then automatically
+requires the owner's voice. The wake service restarts after reboot; some Android
+14+ builds block a background microphone start, in which case a notification
+asks you to open Jarvis once.
+
+Saved memories (including facts added from the Memory screen) are injected into
+the live Gemini session immediately through a silent context update, so Jarvis
+can recall them without reconnecting.
 
 ## Build commands
 

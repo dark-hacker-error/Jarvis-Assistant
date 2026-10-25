@@ -54,6 +54,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -64,6 +66,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.Locale
+import kotlin.math.sin
 
 data class JarvisLiveError(
     val title: String,
@@ -136,6 +139,14 @@ class JarvisConversationService : Service() {
 
         private val _audioFrequency = MutableStateFlow(com.jarvis.assistant.audio.AudioFrequencyData())
         val audioFrequency: StateFlow<com.jarvis.assistant.audio.AudioFrequencyData> = _audioFrequency.asStateFlow()
+
+        /**
+         * True while the local Android TextToSpeech engine is speaking. The
+         * floating orb observes this in addition to Gemini's AudioPlayer state
+         * so offline/fallback announcements also reveal the orb.
+         */
+        private val _ttsSpeaking = MutableStateFlow(false)
+        val ttsSpeaking: StateFlow<Boolean> = _ttsSpeaking.asStateFlow()
 
         private val _liveUserTranscript = MutableStateFlow("")
         val liveUserTranscript: StateFlow<String> = _liveUserTranscript.asStateFlow()
@@ -592,22 +603,30 @@ class JarvisConversationService : Service() {
                     tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                         override fun onStart(utteranceId: String?) {
                             Log.d("JarvisService", "TTS onStart: $utteranceId")
+                            _ttsSpeaking.value = true
+                            if (_isSessionOn.value) {
+                                setConversationState(ConversationState.SPEAKING)
+                                startTtsAmplitude()
+                            }
                         }
 
                         override fun onDone(utteranceId: String?) {
                             Log.d("JarvisService", "TTS onDone: $utteranceId")
                             handleTtsDone(utteranceId)
+                            finishTtsSpeech()
                         }
 
                         @Deprecated("Deprecated in Java")
                         override fun onError(utteranceId: String?) {
                             Log.e("JarvisService", "TTS onError: $utteranceId")
                             handleTtsDone(utteranceId)
+                            finishTtsSpeech()
                         }
 
                         override fun onError(utteranceId: String?, errorCode: Int) {
                             Log.e("JarvisService", "TTS onError: $utteranceId code: $errorCode")
                             handleTtsDone(utteranceId)
+                            finishTtsSpeech()
                         }
                     })
                 }
@@ -619,6 +638,49 @@ class JarvisConversationService : Service() {
 
     private fun handleTtsDone(utteranceId: String?) {
         // Robotic system announcements disabled; all speech is handled via natural Gemini Live neural audio.
+    }
+
+    private var ttsAmplitudeJob: Job? = null
+
+    /**
+     * Local TextToSpeech exposes no amplitude callback. Drive the orb with a
+     * smooth synthetic envelope so it still reacts visually while the fallback
+     * engine speaks.
+     */
+    private fun startTtsAmplitude() {
+        ttsAmplitudeJob?.cancel()
+        ttsAmplitudeJob = serviceScope.launch {
+            var tick = 0L
+            while (isActive && _ttsSpeaking.value) {
+                val envelope = 0.5f + 0.5f * sin(tick / 110.0).toFloat()
+                val amplitude = (0.22f + 0.33f * envelope).coerceIn(0f, 1f)
+                _audioLevel.value = amplitude
+                _audioFrequency.value = com.jarvis.assistant.audio.AudioFrequencyData(
+                    amplitude = amplitude,
+                    pitchHz = 175f + 25f * envelope,
+                    bass = (amplitude * 0.7f).coerceIn(0f, 1f),
+                    mid = (amplitude * 0.9f).coerceIn(0f, 1f),
+                    high = (amplitude * 0.4f).coerceIn(0f, 1f)
+                )
+                tick += 60
+                delay(60)
+            }
+        }
+    }
+
+    private fun stopTtsAmplitude() {
+        ttsAmplitudeJob?.cancel()
+        ttsAmplitudeJob = null
+    }
+
+    private fun finishTtsSpeech() {
+        _ttsSpeaking.value = false
+        stopTtsAmplitude()
+        if (!_isSessionOn.value) return
+        if (audioPlayer?.isPlaying() == true) return
+        lastPlaybackEndTime = System.currentTimeMillis()
+        finalizeTurn()
+        setConversationState(ConversationState.IDLE)
     }
 
     private fun ensureMicrophoneForegroundService() {
@@ -803,6 +865,7 @@ class JarvisConversationService : Service() {
         _isSessionOn.value = true
         _isStandby.value = false
         attachFloatingOrb()
+        startMemorySync()
         lastResponseTimedOut = false
         val now = System.currentTimeMillis()
         lastUserSpeechDetectedTime = now
@@ -824,6 +887,7 @@ class JarvisConversationService : Service() {
                     setConversationState(ConversationState.SPEAKING)
                 } else {
                     lastPlaybackEndTime = System.currentTimeMillis()
+                    _audioLevel.value = 0f
                     finalizeTurn()
                     if (_isSessionOn.value) {
                         setConversationState(ConversationState.IDLE)
@@ -1657,6 +1721,39 @@ class JarvisConversationService : Service() {
     }
 
     // ---------------------------------------------------------------------
+    // Live memory synchronisation
+    // ---------------------------------------------------------------------
+
+    private var memorySyncJob: Job? = null
+
+    /**
+     * Pushes a fresh memory snapshot into the running Live session whenever a
+     * memory is saved, edited or deleted. Without this, a fact added while
+     * Jarvis was already connected stayed invisible until the next reconnect.
+     */
+    private fun startMemorySync() {
+        memorySyncJob?.cancel()
+        val app = application as? JarvisApp ?: return
+        memorySyncJob = serviceScope.launch {
+            app.memoryManager.revision
+                .drop(1)
+                .collectLatest {
+                    // Coalesce bursts (a single "remember" can write several rows).
+                    delay(600)
+                    if (!_isSessionOn.value) return@collectLatest
+                    val snapshot = withContext(Dispatchers.IO) {
+                        app.memoryManager.buildLiveMemoryUpdate()
+                    }
+                    val sent = liveWebSocket?.sendContextUpdate(snapshot) == true
+                    Log.i(
+                        "JarvisService",
+                        "Live memory refresh sent=$sent (${snapshot.length} chars)"
+                    )
+                }
+        }
+    }
+
+    // ---------------------------------------------------------------------
     // Floating orb (Part 2 owns the visual while the session is active)
     // ---------------------------------------------------------------------
 
@@ -1675,7 +1772,10 @@ class JarvisConversationService : Service() {
                 serviceScope.launch(Dispatchers.Main.immediate) {
                     enterStandby(announce = false)
                 }
-            }
+            },
+            // Attach transparent. The orb is revealed only while Jarvis speaks,
+            // which removes the WindowManager addView latency from the first word.
+            reveal = false
         )
         floatingOrbAttached = shown
         if (!shown) {
@@ -1685,6 +1785,8 @@ class JarvisConversationService : Service() {
         startOrbSync()
     }
 
+    private var orbConcealJob: Job? = null
+
     private fun startOrbSync() {
         orbSyncJob?.cancel()
         orbSyncJob = serviceScope.launch(Dispatchers.Main.immediate) {
@@ -1692,9 +1794,10 @@ class JarvisConversationService : Service() {
                 _isSessionOn,
                 _conversationState,
                 _audioLevel,
+                _ttsSpeaking,
                 com.jarvis.assistant.automation.agent.AgentTaskEngine.taskState
-            ) { sessionOn, state, amplitude, task ->
-                OrbRuntimeState(sessionOn, state, amplitude, task != null)
+            ) { sessionOn, state, amplitude, ttsSpeaking, task ->
+                OrbRuntimeState(sessionOn, state, amplitude, ttsSpeaking, task != null)
             }.collect { runtime ->
                 if (!runtime.sessionOn || !floatingOrbAttached) return@collect
                 val working = runtime.taskRunning || runtime.state == ConversationState.THINKING
@@ -1705,6 +1808,33 @@ class JarvisConversationService : Service() {
                     else -> null
                 }
                 JarvisFloatingOrbController.update(mode, status, runtime.amplitude)
+
+                // The orb exists only while Jarvis (or the user during a live
+                // turn) is actually producing sound. Everything else stays
+                // fully transparent and non-touchable.
+                val speaking = runtime.state == ConversationState.SPEAKING || runtime.ttsSpeaking
+                val userVoicing = runtime.state == ConversationState.LISTENING &&
+                    runtime.amplitude > 0.06f
+                val reveal = speaking || userVoicing
+
+                if (reveal) {
+                    orbConcealJob?.cancel()
+                    orbConcealJob = null
+                    JarvisFloatingOrbController.setVisible(true)
+                } else if (orbConcealJob == null) {
+                    // Small debounce stops flicker between TTS chunks / turns.
+                    orbConcealJob = serviceScope.launch(Dispatchers.Main.immediate) {
+                        delay(180)
+                        val stillSpeaking = _ttsSpeaking.value ||
+                            _conversationState.value == ConversationState.SPEAKING
+                        val stillVoicing = _conversationState.value == ConversationState.LISTENING &&
+                            _audioLevel.value > 0.06f
+                        if (!stillSpeaking && !stillVoicing) {
+                            JarvisFloatingOrbController.setVisible(false)
+                        }
+                        orbConcealJob = null
+                    }
+                }
             }
         }
     }
@@ -1712,6 +1842,8 @@ class JarvisConversationService : Service() {
     private fun detachFloatingOrb() {
         orbSyncJob?.cancel()
         orbSyncJob = null
+        orbConcealJob?.cancel()
+        orbConcealJob = null
         if (floatingOrbAttached) {
             floatingOrbAttached = false
             JarvisFloatingOrbController.hide(animated = true)
@@ -1722,6 +1854,7 @@ class JarvisConversationService : Service() {
         val sessionOn: Boolean,
         val state: ConversationState,
         val amplitude: Float,
+        val ttsSpeaking: Boolean,
         val taskRunning: Boolean
     )
 
@@ -3140,6 +3273,8 @@ class JarvisConversationService : Service() {
     private fun stopActiveConversation() {
         inactivityJob?.cancel()
         inactivityJob = null
+        memorySyncJob?.cancel()
+        memorySyncJob = null
         cancelAllActiveTools()
         com.jarvis.assistant.automation.agent.AgentTaskEngine.resetForSession()
         _isSessionOn.value = false
@@ -3156,6 +3291,9 @@ class JarvisConversationService : Service() {
 
         audioRecorder?.stop()
         audioRecorder = null
+
+        _ttsSpeaking.value = false
+        stopTtsAmplitude()
 
         audioPlayer?.flush()
         audioPlayer?.release()

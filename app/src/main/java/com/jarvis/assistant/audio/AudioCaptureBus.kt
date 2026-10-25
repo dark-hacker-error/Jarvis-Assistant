@@ -78,12 +78,23 @@ object AudioCaptureBus {
     private var recording = false
     private var handoffActive = false
     private var handoffUntil = 0L
+    private var currentSource = MediaRecorder.AudioSource.VOICE_COMMUNICATION
     private var echoCanceler: AcousticEchoCanceler? = null
     private var noiseSuppressor: NoiseSuppressor? = null
     private var automaticGainControl: AutomaticGainControl? = null
 
-    /** Attach a listener. Starts the single AudioRecord if this is the first one. */
-    fun register(context: Context, listener: Listener): Boolean {
+    /**
+     * Attach a listener. Starts the single AudioRecord if this is the first one.
+     *
+     * [source] is honoured only for the first listener in this process. Part 1
+     * can request the raw [MediaRecorder.AudioSource.MIC] while Part 2 keeps
+     * [MediaRecorder.AudioSource.VOICE_COMMUNICATION] for echo cancellation.
+     */
+    fun register(
+        context: Context,
+        listener: Listener,
+        source: Int = MediaRecorder.AudioSource.VOICE_COMMUNICATION
+    ): Boolean {
         val app = context.applicationContext
         synchronized(lock) {
             appContext = app
@@ -91,6 +102,7 @@ object AudioCaptureBus {
                 listeners.add(listener)
             }
             if (recording) return true
+            currentSource = source
             val started = startLocked(app)
             if (!started) {
                 listeners.remove(listener)
@@ -222,7 +234,7 @@ object AudioCaptureBus {
 
         val record = try {
             AudioRecord(
-                MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+                currentSource,
                 SAMPLE_RATE,
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,
@@ -240,7 +252,7 @@ object AudioCaptureBus {
         }
 
         return try {
-            attachAudioEffects(record)
+            attachAudioEffects(record, currentSource)
             record.startRecording()
             audioRecord = record
             recording = true
@@ -306,6 +318,10 @@ object AudioCaptureBus {
 
         var record = initialRecord
         var consecutiveErrors = 0
+        var framesRead = 0L
+        var partialReads = 0L
+        var peakAmplitude = 0f
+        var lastDiagnosticAt = 0L
         val buffer = ByteArray(CHUNK_SIZE_BYTES)
 
         while (true) {
@@ -330,9 +346,41 @@ object AudioCaptureBus {
 
             if (readBytes > 0) {
                 consecutiveErrors = 0
+                framesRead++
+                if (readBytes != buffer.size) partialReads++
                 val pcm = buffer.copyOf(readBytes)
-                val frequency = AudioUtils.analyzeFrequency(pcm, readBytes, SAMPLE_RATE)
-                dispatch(Frame(pcm, frequency.amplitude, frequency))
+                val frequency = try {
+                    AudioUtils.analyzeFrequency(pcm, readBytes, SAMPLE_RATE)
+                } catch (t: Throwable) {
+                    Log.w(TAG, "Frame analysis failed (${readBytes} bytes): ${t.message}")
+                    AudioFrequencyData()
+                }
+                if (frequency.amplitude > peakAmplitude) peakAmplitude = frequency.amplitude
+
+                val now = SystemClock.elapsedRealtime()
+                if (framesRead == 1L) {
+                    Log.i(
+                        TAG,
+                        "First microphone frame: ${readBytes}B source=$currentSource " +
+                            "amplitude=${frequency.amplitude}"
+                    )
+                }
+                if (lastDiagnosticAt == 0L || now - lastDiagnosticAt >= 10_000L) {
+                    lastDiagnosticAt = now
+                    Log.i(
+                        TAG,
+                        "Mic bus alive: frames=$framesRead partial=$partialReads " +
+                            "peakAmp=$peakAmplitude source=$currentSource " +
+                            "listeners=${listeners.size} handoff=$handoffActive"
+                    )
+                    peakAmplitude = 0f
+                }
+
+                try {
+                    dispatch(Frame(pcm, frequency.amplitude, frequency))
+                } catch (t: Throwable) {
+                    Log.w(TAG, "Frame dispatch failed: ${t.message}")
+                }
                 continue
             }
 
@@ -421,7 +469,7 @@ object AudioCaptureBus {
         }
         return try {
             val newRecord = AudioRecord(
-                MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+                currentSource,
                 SAMPLE_RATE,
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,
@@ -431,7 +479,7 @@ object AudioCaptureBus {
                 newRecord.release()
                 return null
             }
-            attachAudioEffects(newRecord)
+            attachAudioEffects(newRecord, currentSource)
             newRecord.startRecording()
             audioRecord = newRecord
             Log.i(TAG, "Microphone bus recovered")
@@ -442,7 +490,13 @@ object AudioCaptureBus {
         }
     }
 
-    private fun attachAudioEffects(record: AudioRecord) {
+    private fun attachAudioEffects(record: AudioRecord, source: Int) {
+        // Raw MIC is used by the wake spotter. Platform AEC/NS/AGC can distort
+        // or gate the keyword, so leave the raw stream untouched for that path.
+        if (source != MediaRecorder.AudioSource.VOICE_COMMUNICATION) {
+            Log.i(TAG, "Raw microphone source=$source; platform audio effects skipped")
+            return
+        }
         val sessionId = record.audioSessionId
         if (AcousticEchoCanceler.isAvailable()) {
             try {

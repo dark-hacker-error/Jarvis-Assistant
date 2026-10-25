@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.k2fsa.sherpa.onnx.SpeakerEmbeddingExtractor
 import com.k2fsa.sherpa.onnx.SpeakerEmbeddingExtractorConfig
+import kotlin.math.abs
 import kotlin.math.sqrt
 
 /**
@@ -42,6 +43,14 @@ object SherpaSpeakerVerifier {
     fun isReady(context: Context): Boolean = ensureExtractor(context) != null
 
     /**
+     * Loads the model ahead of the first wake so verification starts at
+     * embedding inference instead of a 28 MB ONNX initialisation.
+     */
+    fun preload(context: Context) {
+        ensureExtractor(context)
+    }
+
+    /**
      * Frees the 28 MB speaker model. The wake service calls this after an idle
      * period so a phone that has not heard "Jarvis" for a while only keeps the
      * keyword spotter resident. The next verification transparently reloads
@@ -74,12 +83,13 @@ object SherpaSpeakerVerifier {
         synchronized(lock) {
             var stream: com.k2fsa.sherpa.onnx.OnlineStream? = null
             return try {
-                val samples = FloatArray(pcm16.size / 2)
+                val voiced = trimSilence(pcm16)
+                val samples = FloatArray(voiced.size / 2)
                 var sampleIndex = 0
                 var byteIndex = 0
-                while (byteIndex + 1 < pcm16.size) {
-                    val low = pcm16[byteIndex].toInt() and 0xFF
-                    val high = pcm16[byteIndex + 1].toInt()
+                while (byteIndex + 1 < voiced.size) {
+                    val low = voiced[byteIndex].toInt() and 0xFF
+                    val high = voiced[byteIndex + 1].toInt()
                     val value = (high shl 8) or low
                     samples[sampleIndex++] = value.toFloat() / 32768f
                     byteIndex += 2
@@ -163,6 +173,45 @@ object SherpaSpeakerVerifier {
                 null
             }
         }
+    }
+
+    /**
+     * Drops leading/trailing near-silence so the embedding is computed on the
+     * spoken phrase instead of the surrounding room noise. Keeps a small guard
+     * band on both ends because WeSpeaker expects some context.
+     */
+    private fun trimSilence(pcm16: ByteArray): ByteArray {
+        val sampleCount = pcm16.size / 2
+        if (sampleCount < 1_600) return pcm16
+
+        val samples = FloatArray(sampleCount)
+        var peak = 0f
+        var index = 0
+        var byteIndex = 0
+        while (byteIndex + 1 < pcm16.size) {
+            val low = pcm16[byteIndex].toInt() and 0xFF
+            val high = pcm16[byteIndex + 1].toInt()
+            val value = ((high shl 8) or low).toFloat() / 32768f
+            samples[index++] = value
+            if (abs(value) > peak) peak = abs(value)
+            byteIndex += 2
+        }
+        if (peak <= 0.01f) return pcm16
+
+        val gate = (peak * 0.12f).coerceAtLeast(0.01f)
+        var start = 0
+        while (start < sampleCount && abs(samples[start]) < gate) start++
+        var end = sampleCount - 1
+        while (end > start && abs(samples[end]) < gate) end--
+        if (end <= start) return pcm16
+
+        val guard = (SAMPLE_RATE * 15 / 100) // 150 ms of context
+        start = (start - guard).coerceAtLeast(0)
+        end = (end + guard).coerceAtMost(sampleCount - 1)
+
+        val out = ByteArray((end - start + 1) * 2)
+        System.arraycopy(pcm16, start * 2, out, 0, out.size)
+        return out
     }
 
     private fun normalise(vector: FloatArray): FloatArray? {

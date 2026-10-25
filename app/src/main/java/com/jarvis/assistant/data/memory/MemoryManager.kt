@@ -21,7 +21,11 @@ class MemoryManager(
         private const val TAG = "MemoryManager"
         private const val MAX_SHORT_TERM_TURNS = 30
         private const val LEARNING_DEDUP_WINDOW_MS = 15_000L
+        private const val MAX_PROMPT_MEMORIES = 250
     }
+
+    /** Changes whenever a memory row is written, edited or deleted. */
+    val revision: StateFlow<Long> get() = repository.revision
 
     private val learningLock = Any()
 
@@ -443,10 +447,15 @@ class MemoryManager(
 
     /**
      * Builds the complete prompt context for Gemini Live.
+     *
      * Contains:
-     * 1. Core Profile
-     * 2. All categorized Room database memories (persistent across restarts)
-     * 3. Recent 15 conversation turns across sessions (persistent dialogue memory)
+     * 1. Core profile
+     * 2. Every permanent Room memory (not just the newest 40)
+     * 3. Recent conversation turns across app restarts
+     *
+     * The recall contract is intentionally explicit: the model used to answer
+     * "mujhe nahi pata" even when the fact was sitting in the database because
+     * nothing told it that the list below is authoritative.
      */
     suspend fun getSystemPromptContext(): String {
         val all = repository.getAllMemories()
@@ -466,11 +475,32 @@ class MemoryManager(
             sb.append("- User's Daily Routine: ${preferences.dailyRoutine}\n")
         }
 
+        sb.append("\n[MEMORY RECALL CONTRACT - READ BEFORE EVERY ANSWER]:\n")
+        sb.append("- The memories below are permanent, verified facts the user asked you to keep.\n")
+        sb.append("- They are already in your context. You do NOT need a tool or a lookup to use them.\n")
+        sb.append("- If the user asks 'do you remember', 'mujhe kya pasand hai', 'mera favourite kya hai', ")
+        sb.append("'yaad hai tujhe', or any question about their life, preferences, people, routines or past ")
+        sb.append("statements, scan this list and answer directly from it.\n")
+        sb.append("- Never say 'mujhe nahi pata', 'I don't know' or 'I don't have that memory' when a matching ")
+        sb.append("fact exists below. Quote the fact naturally in Hinglish.\n")
+        sb.append("- If two memories conflict, prefer the newest one and say so.\n")
+        sb.append("- Only admit you do not know when the fact is genuinely absent from this list.\n")
+
         if (all.isNotEmpty()) {
-            sb.append("\n[ALL PERMANENT MEMORIES FROM DATABASE]:\n")
-            all.take(40).forEach { mem ->
+            sb.append("\n[ALL PERMANENT MEMORIES FROM DATABASE - ${all.size} FACTS]:\n")
+            val ordered = all.sortedWith(
+                compareByDescending<MemoryEntity> { isProfileMemory(it) }
+                    .thenByDescending { it.timestamp }
+            )
+            ordered.take(MAX_PROMPT_MEMORIES).forEach { mem ->
                 sb.append("- [${mem.category}] ${mem.rawText}\n")
             }
+            if (ordered.size > MAX_PROMPT_MEMORIES) {
+                sb.append("- ...and ${ordered.size - MAX_PROMPT_MEMORIES} older memories are stored; ")
+                sb.append("ask the user if you need one that is not listed.\n")
+            }
+        } else {
+            sb.append("\n[ALL PERMANENT MEMORIES FROM DATABASE]: none saved yet.\n")
         }
 
         // Persistent Dialogue History across App Restarts
@@ -489,5 +519,36 @@ class MemoryManager(
         }
 
         return sb.toString()
+    }
+
+    /**
+     * Compact snapshot pushed into a running Live session when the memory
+     * database changes. Sent with `turn_complete = false`, so it refreshes the
+     * model's knowledge without interrupting or triggering a reply.
+     */
+    suspend fun buildLiveMemoryUpdate(): String {
+        val all = repository.getAllMemories()
+        val sb = StringBuilder()
+        sb.append("[MEMORY REFRESH - the permanent memory database just changed. ")
+        sb.append("These are the current facts. Use them immediately in this same conversation.]\n")
+        if (all.isEmpty()) {
+            sb.append("- (memory is empty)\n")
+        } else {
+            all.sortedWith(
+                compareByDescending<MemoryEntity> { isProfileMemory(it) }
+                    .thenByDescending { it.timestamp }
+            ).take(MAX_PROMPT_MEMORIES).forEach { mem ->
+                sb.append("- [${mem.category}] ${mem.rawText}\n")
+            }
+        }
+        return sb.toString()
+    }
+
+    private fun isProfileMemory(memory: MemoryEntity): Boolean {
+        val key = memory.key
+        return key.startsWith("user_") ||
+            key.startsWith("pref_") ||
+            key.startsWith("relation_") ||
+            key.startsWith("favorite_")
     }
 }

@@ -1,11 +1,13 @@
 package com.jarvis.assistant.voice
 
 import android.content.Context
+import android.media.MediaRecorder
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import com.jarvis.assistant.audio.AudioCaptureBus
+import com.jarvis.assistant.audio.AudioUtils
 import com.jarvis.assistant.util.PermissionHelper
 import com.k2fsa.sherpa.onnx.FeatureConfig
 import com.k2fsa.sherpa.onnx.KeywordSpotter
@@ -48,7 +50,13 @@ class SherpaOnnxWakeWordEngine(
      * in a different process and must release its own AudioRecord before Part 2
      * starts, so it passes false and sends the recent PCM through the intent.
      */
-    private val useBusHandoff: Boolean = true
+    private val useBusHandoff: Boolean = true,
+    /**
+     * Part 1 uses the raw microphone so the keyword spotter is not fed through
+     * the platform voice-processing chain. Part 2 keeps the communication
+     * source because it needs echo cancellation while Jarvis is speaking.
+     */
+    private val preferRawMic: Boolean = false
 ) {
     companion object {
         private const val TAG = "SherpaWakeWord"
@@ -61,6 +69,7 @@ class SherpaOnnxWakeWordEngine(
         private const val COOLDOWN_MS = 1_500L
         private const val HANDOFF_MS = 3_500L
         private const val MODEL_RETRY_MS = 2_000L
+        private const val DIAGNOSTIC_INTERVAL_MS = 10_000L
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -89,6 +98,16 @@ class SherpaOnnxWakeWordEngine(
     private var listenerAttached = false
     private var lastTriggerAt = 0L
 
+    // AudioRecord.read() is allowed to return fewer bytes than requested. The
+    // old code dropped those partial frames, which on some devices meant the
+    // spotter never received a single 10 ms chunk. Carry the remainder across
+    // frames so every 320-byte chunk is fed exactly once.
+    private var pendingWakeBytes = ByteArray(0)
+    private var framesFed = 0L
+    private var chunksFed = 0L
+    private var peakRms = 0f
+    private var lastDiagnosticAt = 0L
+
     private val busListener = AudioCaptureBus.Listener { frame ->
         if (!active || paused) return@Listener
         feed(frame)
@@ -98,6 +117,7 @@ class SherpaOnnxWakeWordEngine(
         active = true
         paused = false
         clearRecent()
+        resetFeedState()
         AudioCaptureBus.endHandoff()
         ensureModelThenListen()
     }
@@ -110,6 +130,7 @@ class SherpaOnnxWakeWordEngine(
         active = true
         paused = false
         clearRecent()
+        resetFeedState()
         AudioCaptureBus.endHandoff()
         val currentSpotter = spotter
         val currentStream = stream
@@ -134,12 +155,18 @@ class SherpaOnnxWakeWordEngine(
     fun pause() {
         paused = true
         detachListener()
+        synchronized(audioLock) {
+            pendingWakeBytes = ByteArray(0)
+        }
     }
 
     fun stop() {
         active = false
         paused = true
         detachListener()
+        synchronized(audioLock) {
+            pendingWakeBytes = ByteArray(0)
+        }
         val oldSpotter: KeywordSpotter?
         val oldStream: OnlineStream?
         synchronized(modelLock) {
@@ -173,7 +200,26 @@ class SherpaOnnxWakeWordEngine(
 
         scope.launch(Dispatchers.Default) {
             try {
+                val loadStartedAt = SystemClock.elapsedRealtime()
                 Log.i(TAG, "Loading Sherpa-ONNX keyword spotter")
+                val previousSpotter: KeywordSpotter?
+                val previousStream: OnlineStream?
+                synchronized(modelLock) {
+                    previousSpotter = spotter
+                    previousStream = stream
+                    spotter = null
+                    stream = null
+                }
+                try {
+                    previousStream?.release()
+                } catch (_: Throwable) {
+                }
+                if (previousSpotter != null) {
+                    try {
+                        previousSpotter.release()
+                    } catch (_: Throwable) {
+                    }
+                }
                 val config = KeywordSpotterConfig(
                     featConfig = FeatureConfig(sampleRate = 16_000, featureDim = 80),
                     modelConfig = OnlineModelConfig(
@@ -192,7 +238,7 @@ class SherpaOnnxWakeWordEngine(
                     keywordsFile = KEYWORDS,
                     keywordsScore = 1.5f,
                     keywordsThreshold = 0.25f,
-                    numTrailingBlanks = 1
+                    numTrailingBlanks = 2
                 )
                 val newSpotter = KeywordSpotter(context.assets, config)
                 val newStream = newSpotter.createStream("")
@@ -208,7 +254,11 @@ class SherpaOnnxWakeWordEngine(
                     stream = newStream
                     modelLoading = false
                 }
-                Log.i(TAG, "Keyword spotter ready; listening for JARVIS")
+                Log.i(
+                    TAG,
+                    "Keyword spotter ready in ${SystemClock.elapsedRealtime() - loadStartedAt} ms; " +
+                        "listening for JARVIS"
+                )
                 if (!paused) attachListener()
             } catch (t: Throwable) {
                 synchronized(modelLock) {
@@ -231,9 +281,14 @@ class SherpaOnnxWakeWordEngine(
             Log.w(TAG, "RECORD_AUDIO permission not granted; wake listener not attached")
             return
         }
-        listenerAttached = AudioCaptureBus.register(context, busListener)
+        val source = if (preferRawMic) {
+            MediaRecorder.AudioSource.MIC
+        } else {
+            MediaRecorder.AudioSource.VOICE_COMMUNICATION
+        }
+        listenerAttached = AudioCaptureBus.register(context, busListener, source)
         if (listenerAttached) {
-            Log.i(TAG, "Wake listener attached to shared microphone bus")
+            Log.i(TAG, "Wake listener attached to shared microphone bus (source=$source)")
         } else {
             Log.w(TAG, "Unable to attach wake listener; retrying")
             if (active && !paused) {
@@ -290,22 +345,59 @@ class SherpaOnnxWakeWordEngine(
         }
     }
 
+    private fun resetFeedState() {
+        synchronized(audioLock) {
+            pendingWakeBytes = ByteArray(0)
+            framesFed = 0L
+            chunksFed = 0L
+            peakRms = 0f
+            lastDiagnosticAt = 0L
+        }
+    }
+
     private fun feed(frame: AudioCaptureBus.Frame) {
         synchronized(audioLock) {
             if (!active || paused) return
             appendRecent(frame.pcm)
+
+            framesFed++
+            val rms = AudioUtils.calculateRmsNormalized(frame.pcm, frame.pcm.size)
+            if (rms > peakRms) peakRms = rms
+            val now = SystemClock.elapsedRealtime()
+            if (lastDiagnosticAt == 0L || now - lastDiagnosticAt >= DIAGNOSTIC_INTERVAL_MS) {
+                lastDiagnosticAt = now
+                Log.i(
+                    TAG,
+                    "KWS feed: frames=$framesFed chunks=$chunksFed peakRms=$peakRms " +
+                        "pending=${pendingWakeBytes.size}B frame=${frame.pcm.size}B " +
+                        "modelReady=${spotter != null && stream != null}"
+                )
+                peakRms = 0f
+            }
+
             val currentSpotter = spotter ?: return
             val currentStream = stream ?: return
 
+            // Carry any partial 10 ms tail into the next microphone frame.
+            val combined = if (pendingWakeBytes.isEmpty()) {
+                frame.pcm
+            } else {
+                ByteArray(pendingWakeBytes.size + frame.pcm.size).also { out ->
+                    System.arraycopy(pendingWakeBytes, 0, out, 0, pendingWakeBytes.size)
+                    System.arraycopy(frame.pcm, 0, out, pendingWakeBytes.size, frame.pcm.size)
+                }
+            }
+
             try {
                 var offset = 0
-                while (offset + AudioCaptureBus.WAKE_CHUNK_SIZE_BYTES <= frame.pcm.size) {
+                while (offset + AudioCaptureBus.WAKE_CHUNK_SIZE_BYTES <= combined.size) {
                     if (!active || paused) return
-                    val bytes = frame.pcm.copyOfRange(
+                    val bytes = combined.copyOfRange(
                         offset,
                         offset + AudioCaptureBus.WAKE_CHUNK_SIZE_BYTES
                     )
                     offset += AudioCaptureBus.WAKE_CHUNK_SIZE_BYTES
+                    chunksFed++
 
                     val samples = FloatArray(bytes.size / 2)
                     var sampleIndex = 0
@@ -327,22 +419,44 @@ class SherpaOnnxWakeWordEngine(
                             Log.i(
                                 TAG,
                                 "Wake keyword '${result.keyword}' detected at " +
-                                    SystemClock.elapsedRealtime() + " ms"
+                                    SystemClock.elapsedRealtime() + " ms " +
+                                    "(frames=$framesFed chunks=$chunksFed)"
                             )
                             currentSpotter.reset(currentStream)
+                            pendingWakeBytes = ByteArray(0)
                             triggerWake()
                             return
                         }
                     }
                 }
+                pendingWakeBytes = if (offset < combined.size) {
+                    combined.copyOfRange(offset, combined.size)
+                } else {
+                    ByteArray(0)
+                }
             } catch (t: Throwable) {
                 Log.e(TAG, "Keyword stream error: ${t.message}", t)
-                // Recreate the stream on the next resume/start rather than
-                // leaving the engine in a permanently broken state.
-                synchronized(modelLock) {
-                    stream?.release()
+                pendingWakeBytes = ByteArray(0)
+                // Recreate both the stream and the spotter. Keeping a broken
+                // spotter here used to leave the engine silently deaf.
+                val brokenSpotter = synchronized(modelLock) {
+                    val old = spotter
+                    try {
+                        stream?.release()
+                    } catch (_: Throwable) {
+                    }
                     stream = null
+                    spotter = null
+                    old
                 }
+                try {
+                    brokenSpotter?.release()
+                } catch (_: Throwable) {
+                }
+                mainHandler.postDelayed(
+                    { if (active && !paused) ensureModelThenListen() },
+                    MODEL_RETRY_MS
+                )
             }
         }
     }

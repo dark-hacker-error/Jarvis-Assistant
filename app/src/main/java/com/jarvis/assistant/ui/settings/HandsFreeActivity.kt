@@ -13,7 +13,6 @@ import com.jarvis.assistant.R
 import com.jarvis.assistant.JarvisApp
 import com.jarvis.assistant.databinding.ActivityHandsFreeBinding
 import com.jarvis.assistant.ui.permission.PermissionActivity
-import com.jarvis.assistant.ui.voice.VoiceEnrollmentActivity
 import com.jarvis.assistant.util.PermissionHelper
 import com.jarvis.assistant.util.SocialLinks
 import com.jarvis.assistant.util.ThemeManager
@@ -191,22 +190,16 @@ class HandsFreeActivity : AppCompatActivity() {
         }
 
         prefs.isWakeServiceEnabled = true
-        if (prefs.isOwnerVoiceEnabled && !prefs.hasAnyOwnerVoiceProfile()) {
-            Toast.makeText(
-                this,
-                "Enroll your voice first. Wake only reacts to the owner.",
-                Toast.LENGTH_LONG
-            ).show()
-            startActivity(Intent(this, VoiceEnrollmentActivity::class.java))
-            updateWakeServiceStatus()
-            return
-        }
-
+        val needsEnrollment = prefs.isOwnerVoiceEnabled && !prefs.hasAnyOwnerVoiceProfile()
         val started = WakeContract.start(this)
         Toast.makeText(
             this,
-            if (started) "Ultra-light wake enabled. Say \"Jarvis\"."
-            else "Could not start wake service. Check permissions.",
+            when {
+                !started -> "Could not start wake service. Check permissions."
+                needsEnrollment ->
+                    "Wake enabled. Say \"Jarvis\". Enroll your voice to lock it to you."
+                else -> "Ultra-light wake enabled. Say \"Jarvis\"."
+            },
             Toast.LENGTH_LONG
         ).show()
         updateWakeServiceStatus()
