@@ -24,6 +24,12 @@ interface MemoryDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertMemory(memory: MemoryEntity): Long
 
+    @Query("SELECT * FROM memories WHERE lower(trim(rawText)) = lower(trim(:rawText)) ORDER BY timestamp DESC LIMIT 1")
+    suspend fun findByRawText(rawText: String): MemoryEntity?
+
+    @Query("SELECT * FROM memories WHERE `key` = :key ORDER BY timestamp DESC LIMIT 1")
+    suspend fun findByKey(key: String): MemoryEntity?
+
     @Update
     suspend fun updateMemory(memory: MemoryEntity)
 

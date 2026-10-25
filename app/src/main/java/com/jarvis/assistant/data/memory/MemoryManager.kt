@@ -20,7 +20,16 @@ class MemoryManager(
     companion object {
         private const val TAG = "MemoryManager"
         private const val MAX_SHORT_TERM_TURNS = 30
+        private const val LEARNING_DEDUP_WINDOW_MS = 15_000L
     }
+
+    private val learningLock = Any()
+
+    @Volatile
+    private var lastLearnedSpeech: String = ""
+
+    @Volatile
+    private var lastLearnedAt: Long = 0L
 
     // --- Short-Term Memory (Preloaded with persistent history) ---
     private val _shortTermHistory = MutableStateFlow<List<ChatTurn>>(emptyList())
@@ -30,10 +39,14 @@ class MemoryManager(
     init {
         // Preload recent persistent chat turns so memory is continuous across app restarts
         scope.launch(Dispatchers.IO) {
-            val savedTurns = chatRepository.turns.value
-            _shortTermHistory.value = savedTurns.takeLast(MAX_SHORT_TERM_TURNS)
+            reloadShortTermHistory()
             Log.i(TAG, "Preloaded ${_shortTermHistory.value.size} persistent turns into active memory.")
         }
+    }
+
+    /** Re-reads the persisted chat history, e.g. after a backup restore. */
+    fun reloadShortTermHistory() {
+        _shortTermHistory.value = chatRepository.turns.value.takeLast(MAX_SHORT_TERM_TURNS)
     }
 
     fun addShortTermTurn(userText: String, jarvisText: String) {
@@ -80,7 +93,7 @@ class MemoryManager(
             return "I didn't catch what you'd like me to remember, Sir."
         }
 
-        learnPreferencesFromConversation(clean)
+        learnPreferencesFromConversation(clean, includeExplicitFact = false)
 
         val lower = clean.lowercase(Locale.ROOT)
         val category = when {
@@ -253,25 +266,40 @@ class MemoryManager(
      * relationships, and knowledge from spoken user conversation in English and Hinglish.
      * Everything learned is immediately committed to Room Database (MemoryRepository).
      */
-    fun learnPreferencesFromConversation(userSpeech: String) {
+    fun learnPreferencesFromConversation(userSpeech: String, includeExplicitFact: Boolean = true) {
         val clean = userSpeech.trim()
         if (clean.isBlank() || clean.length < 3) return
+
+        // The same utterance is passed through several pipeline stages. Only
+        // learn from it once within a short window; the repository also
+        // de-duplicates exact facts as a second line of defence.
+        val signature = clean.lowercase(Locale.ROOT)
+        val now = System.currentTimeMillis()
+        synchronized(learningLock) {
+            if (signature == lastLearnedSpeech && now - lastLearnedAt < LEARNING_DEDUP_WINDOW_MS) {
+                return
+            }
+            lastLearnedSpeech = signature
+            lastLearnedAt = now
+        }
 
         scope.launch(Dispatchers.IO) {
             val lower = clean.lowercase(Locale.ROOT)
 
             // 1. EXPLICIT "REMEMBER THAT" / "YAAD RAKHNA" STATEMENTS
-            val rememberMatch = Regex("(?i).*(?:remember\\s+that|remember\\s+to|remember|yaad\\s+rakhna\\s+ki|yaad\\s+rakhna)\\s+(.+)$").find(clean)
-            if (rememberMatch != null) {
-                val fact = rememberMatch.groupValues[1].trim()
-                if (fact.length > 3) {
-                    repository.saveMemory(
-                        rawText = fact,
-                        category = MemoryEntity.CATEGORY_NOTES,
-                        key = fact.take(30),
-                        value = fact
-                    )
-                    Log.i(TAG, "Learned explicit fact: $fact")
+            if (includeExplicitFact) {
+                val rememberMatch = Regex("(?i).*(?:remember\\s+that|remember\\s+to|remember|yaad\\s+rakhna\\s+ki|yaad\\s+rakhna)\\s+(.+)$").find(clean)
+                if (rememberMatch != null) {
+                    val fact = rememberMatch.groupValues[1].trim()
+                    if (fact.length > 3) {
+                        repository.saveMemory(
+                            rawText = fact,
+                            category = MemoryEntity.CATEGORY_NOTES,
+                            key = fact.take(30),
+                            value = fact
+                        )
+                        Log.i(TAG, "Learned explicit fact: $fact")
+                    }
                 }
             }
 

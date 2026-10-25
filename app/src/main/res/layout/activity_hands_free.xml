@@ -199,6 +199,61 @@
                     app:backgroundTint="?attr/themeAccent" />
             </LinearLayout>
 
+            <!-- Part 1: ultra-light always-on wake service. Runs in its own
+                 :wake process and only loads the keyword spotter + speaker
+                 verifier. The heavy Jarvis brain stays asleep. -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/bg_jarvis_card"
+                android:padding="20dp"
+                android:layout_marginBottom="20dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="ULTRA-LIGHT WAKE SERVICE"
+                    android:textColor="?attr/themeAccent"
+                    android:textSize="11sp"
+                    android:letterSpacing="0.10"
+                    android:textStyle="bold"
+                    android:fontFamily="sans-serif-medium" />
+
+                <TextView
+                    android:id="@+id/tvWakeServiceStatus"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="CHECKING WAKE SERVICE..."
+                    android:textColor="?attr/themeTextPrimary"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:text="Keeps only the offline &quot;Jarvis&quot; keyword spotter and your voice check alive in a tiny :wake process. The heavy app, memories, TTS and Gemini stay asleep until you actually say &quot;Jarvis&quot;. Wake requires both the keyword and your enrolled voice."
+                    android:textColor="?attr/themeTextMuted"
+                    android:textSize="12sp"
+                    android:lineSpacingExtra="2dp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnToggleWakeService"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="48dp"
+                    android:layout_marginTop="14dp"
+                    android:text="Enable Ultra-Light Wake"
+                    android:textColor="#FFFFFF"
+                    android:textStyle="bold"
+                    android:textSize="13sp"
+                    android:textAllCaps="false"
+                    app:cornerRadius="14dp"
+                    app:backgroundTint="?attr/themeAccent" />
+            </LinearLayout>
+
             <!-- SECTION 1: HOW JARVIS WORKS (NON-DEVELOPER GUIDE) -->
             <TextView
                 android:layout_width="wrap_content"

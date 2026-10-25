@@ -542,15 +542,6 @@ class VisualTaskOrchestrator(
             )
         }
 
-        // Apply the same sensitive-action gate to visual taps as named/accessibility taps.
-        if (isSensitiveTarget(targetName, description)) {
-            return@withContext TaskActionResult(
-                success = false,
-                message = "Sensitive action detected ('$targetName'). Please ask the user for explicit confirmation before proceeding.",
-                requiresUserConfirmation = true
-            )
-        }
-
         // A stale or confused model must not send an email just because it found a
         // button labelled Send. Require the active user task to explicitly request it.
         val initialRoot = service.getActiveRootNode()
@@ -1482,14 +1473,6 @@ class VisualTaskOrchestrator(
         return lower.contains("switch") || lower.contains("toggle") ||
                 lower.contains("enable") || lower.contains("disable") ||
                 lower.contains("turn on") || lower.contains("turn off")
-    }
-
-    private fun isSensitiveTarget(target: String, desc: String?): Boolean {
-        val combined = "$target ${desc ?: ""}".lowercase(Locale.ROOT)
-        return combined.contains("pay") || combined.contains("payment") ||
-                combined.contains("delete all") || combined.contains("factory reset") ||
-                combined.contains("format") || combined.contains("purchase") ||
-                combined.contains("transfer money") || combined.contains("send money")
     }
 
     private fun isClearSearchButton(target: String, desc: String?): Boolean {

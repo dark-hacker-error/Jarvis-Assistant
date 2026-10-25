@@ -16,6 +16,7 @@ import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import java.util.ArrayDeque
 
 /**
  * Streaming neural keyword spotter for the wake path.
@@ -40,7 +41,14 @@ import kotlinx.coroutines.launch
 class SherpaOnnxWakeWordEngine(
     private val context: Context,
     private val scope: CoroutineScope,
-    private val onWakeWord: () -> Unit
+    private val onWakeWord: () -> Unit,
+    /**
+     * Part 2 and the system assist session share the in-process
+     * [AudioCaptureBus], so they keep the hand-off lease enabled. Part 1 runs
+     * in a different process and must release its own AudioRecord before Part 2
+     * starts, so it passes false and sends the recent PCM through the intent.
+     */
+    private val useBusHandoff: Boolean = true
 ) {
     companion object {
         private const val TAG = "SherpaWakeWord"
@@ -58,6 +66,13 @@ class SherpaOnnxWakeWordEngine(
     private val mainHandler = Handler(Looper.getMainLooper())
     private val modelLock = Any()
     private val audioLock = Any()
+
+    // Rolling ~3 s of PCM. The wake callback reads the same audio that
+    // produced the keyword, so speaker verification needs no second phrase.
+    private val recentLock = Any()
+    private val recentChunks = ArrayDeque<ByteArray>()
+    private var recentBytes = 0
+    private val maxRecentBytes = AudioCaptureBus.SAMPLE_RATE * 2 * 3
 
     @Volatile
     private var active = false
@@ -82,6 +97,7 @@ class SherpaOnnxWakeWordEngine(
     fun start() {
         active = true
         paused = false
+        clearRecent()
         AudioCaptureBus.endHandoff()
         ensureModelThenListen()
     }
@@ -93,6 +109,7 @@ class SherpaOnnxWakeWordEngine(
     fun resume() {
         active = true
         paused = false
+        clearRecent()
         AudioCaptureBus.endHandoff()
         val currentSpotter = spotter
         val currentStream = stream
@@ -231,9 +248,52 @@ class SherpaOnnxWakeWordEngine(
         AudioCaptureBus.unregister(busListener)
     }
 
+    /**
+     * Returns up to [maxMs] of the most recent 16 kHz PCM16 audio in
+     * chronological order. Called by the wake callback to run one-shot speaker
+     * verification on the same buffer that produced the keyword.
+     */
+    fun recentAudio(maxMs: Int = 2_000): ByteArray {
+        val maxBytes = (AudioCaptureBus.SAMPLE_RATE * 2 * maxMs / 1000)
+            .coerceIn(0, maxRecentBytes)
+        synchronized(recentLock) {
+            val size = minOf(recentBytes, maxBytes)
+            if (size <= 0) return ByteArray(0)
+            val out = ByteArray(size)
+            var write = size
+            val iterator = recentChunks.descendingIterator()
+            while (iterator.hasNext() && write > 0) {
+                val chunk = iterator.next()
+                val take = minOf(chunk.size, write)
+                write -= take
+                System.arraycopy(chunk, chunk.size - take, out, write, take)
+            }
+            return out
+        }
+    }
+
+    private fun appendRecent(pcm: ByteArray) {
+        if (pcm.isEmpty()) return
+        synchronized(recentLock) {
+            recentChunks.addLast(pcm.copyOf())
+            recentBytes += pcm.size
+            while (recentBytes > maxRecentBytes && recentChunks.isNotEmpty()) {
+                recentBytes -= recentChunks.removeFirst().size
+            }
+        }
+    }
+
+    private fun clearRecent() {
+        synchronized(recentLock) {
+            recentChunks.clear()
+            recentBytes = 0
+        }
+    }
+
     private fun feed(frame: AudioCaptureBus.Frame) {
         synchronized(audioLock) {
             if (!active || paused) return
+            appendRecent(frame.pcm)
             val currentSpotter = spotter ?: return
             val currentStream = stream ?: return
 
@@ -293,9 +353,14 @@ class SherpaOnnxWakeWordEngine(
         lastTriggerAt = now
 
         paused = true
-        // Keep the microphone alive while the existing conversation service
-        // starts and attaches its own AudioRecorder to the same bus.
-        val handoff = AudioCaptureBus.beginHandoff(HANDOFF_MS)
+        // Part 2 (same process) keeps the microphone alive while the existing
+        // conversation service starts. Part 1 releases its own AudioRecord
+        // explicitly because Part 2 runs in another process.
+        val handoff = if (useBusHandoff) {
+            AudioCaptureBus.beginHandoff(HANDOFF_MS)
+        } else {
+            false
+        }
         detachListener()
         Log.i(TAG, "Wake accepted; microphone hand-off active=$handoff")
 

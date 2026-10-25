@@ -9,7 +9,7 @@ An Android voice assistant built with Kotlin, Gemini Live, on-device voice compo
 - Minimum Android version: Android 8.0 (API 26)
 - Compile and target SDK: 34
 - Java/Kotlin target: 17
-- Current app version: 1.8.7 (version code 143)
+- Current app version: 1.9.0 (version code 144)
 
 ## Getting started
 
@@ -19,6 +19,26 @@ An Android voice assistant built with Kotlin, Gemini Live, on-device voice compo
 4. Add a Gemini API key in the app's Settings and grant the requested runtime permissions.
 
 The Gradle wrapper is included in this project. Use `gradlew.bat` on Windows or `./gradlew` on macOS/Linux.
+
+## Always-on wake word and floating orb
+
+Jarvis uses a two-part runtime so the heavy assistant can sleep while the wake
+word stays available:
+
+- **Part 1 (`:wake` process)** is an ultra-light foreground service. It runs a
+  free, offline Sherpa-ONNX keyword spotter for "Jarvis" and verifies the owner
+  with a WeSpeaker CAM++ embedding on the same 16 kHz buffer. Room, TTS, Gemini,
+  MCP, Shizuku, backup and the large Vosk ASR model are never loaded there.
+- **Part 2 (main process)** starts only after both the keyword and the owner
+  voice match. It shows a bottom-centre floating orb instead of opening
+  `MainActivity`, then hands the microphone back to Part 1 when the
+  conversation ends.
+
+No API key, account or usage limit is involved in wake detection. Enable it in
+**Settings → Hands-free**, enroll the owner voice once, and grant microphone,
+notification and "Display over other apps" permissions. The wake service
+restarts after reboot; some Android 14+ builds block a background microphone
+start, in which case a notification asks you to open Jarvis once.
 
 ## Build commands
 
@@ -72,7 +92,8 @@ The certificate fingerprint must be calculated from the same key used to sign th
 │       │   ├── ui/              Activities, fragments, overlays
 │       │   ├── util/            Prompt builder and shared helpers
 │       │   ├── vision/          Screen capture, UI grounding, visual actions
-│       │   └── voice/           Wake word, orb, VoiceInteraction session
+│       │   ├── voice/           Wake engine, orb, VoiceInteraction session
+│       │   └── wake/            Part 1 wake service and cross-process contract
 │       ├── assets/              Bundled web UI and offline voice models
 │       └── res/                 Android layouts, drawables, values, and config
 ├── docs/

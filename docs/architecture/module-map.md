@@ -30,7 +30,8 @@ app/src/main/java/com/jarvis/assistant/
 ├── ui/                              Activities, fragments, adapters, overlay
 ├── util/                            Cross-cutting helpers and prompt builder
 ├── vision/                          MediaProjection capture, UI grounding, UI actions
-└── voice/                           Wake word, orb, VoiceInteraction session
+├── voice/                           Wake engine, orb, VoiceInteraction session
+└── wake/                            Part 1 service, cross-process contract, status, notifications
 ```
 
 ## Package reference
@@ -39,20 +40,21 @@ app/src/main/java/com/jarvis/assistant/
 
 | File | Purpose |
 | --- | --- |
-| `JarvisApp.kt` | `Application`. Creates `AppPreferences`, `ChatRepository`, `MemoryDatabase/Repository/Manager`, `YouTubeAutomationManager`, `ContactResolver`, `PhoneControlManager`, `WhatsAppAssistant`, `ShizukuManager`, `McpManager`, `CommandExecutor`. Initialises `VoskModelManager`, registers activity lifecycle callbacks for theming and foreground tracking. Exposes `moveAppToBack()` and `isAppForeground`. |
-| `JarvisVoiceInteractionService.kt` | System `VoiceInteractionService`. Owns the wake engine and floating orb, starts the conversation service on wake, and exposes device/assistant metadata. |
+| `JarvisApp.kt` | `Application`. Creates `AppPreferences`, `ChatRepository`, `MemoryDatabase/Repository/Manager`, `YouTubeAutomationManager`, `ContactResolver`, `PhoneControlManager`, `WhatsAppAssistant`, `ShizukuManager`, `McpManager`, `CommandExecutor`. Initialises `VoskModelManager`, registers activity lifecycle callbacks for theming and foreground tracking. In the `:wake` process it initialises only the lightweight preferences and returns before any heavy subsystem. Exposes `moveAppToBack()` and `isAppForeground`. |
+| `JarvisVoiceInteractionService.kt` | System `VoiceInteractionService`. Handles assist gestures, starts Part 2, pauses/resumes Part 1 around the session, and exposes device/assistant metadata. It does not run a duplicate wake listener while Part 1 is active. |
 
 ### `audio`
 
 | File | Purpose |
 | --- | --- |
-| `AudioCaptureBus.kt` | Singleton microphone owner. 16 kHz mono PCM16, 20 ms frames, `VOICE_COMMUNICATION` + AEC/NS/AGC. Listener registration, 2 s rolling buffer, 3.5 s wake hand-off lease. |
+| `AudioCaptureBus.kt` | Singleton microphone owner per process. 16 kHz mono PCM16, 20 ms frames, `VOICE_COMMUNICATION` + AEC/NS/AGC. Listener registration, 2 s rolling buffer, 3.5 s wake hand-off lease, external pre-roll seed for the Part 1 → Part 2 hand-off. |
 | `AudioRecorder.kt` | Conversation-side adapter over the bus. Emits 640-byte chunks, amplitude and frequency data, mute support. |
 | `AudioPlayer.kt` | `AudioTrack` queue for 24 kHz PCM from Gemini, amplitude callback, flush/interrupt, turn-complete callback. |
 | `AudioUtils.kt` | PCM helpers and amplitude/frequency analysis. |
 | `HeadsetAudioRouter.kt` | Bluetooth/wired headset routing, SCO handling. |
-| `OwnerVoiceManager.kt` | Speaker embedding extraction and verification against the enrolled owner profile (Vosk speaker model assets). |
-| `VoskModelManager.kt` | Installs/validates the bundled Vosk models used for speaker biometrics. |
+| `OwnerVoiceManager.kt` | Speaker embedding extraction and verification against the enrolled owner profile. Prefers the WeSpeaker CAM++ profile and falls back to the legacy Vosk x-vector profile. |
+| `SherpaSpeakerVerifier.kt` | Offline WeSpeaker CAM++ ONNX embeddings for 16 kHz PCM, cosine distance, lazy model load, and release. |
+| `VoskModelManager.kt` | Installs/validates the bundled Vosk models. `initSpeakerOnly()` loads only the 15 MB speaker model for legacy profiles in `:wake`. |
 | `JarvisSoundEffects.kt` | Short UI sounds (wake, error, confirmation). |
 
 ### `automation.accessibility`
@@ -100,7 +102,7 @@ app/src/main/java/com/jarvis/assistant/
 
 | File | Purpose |
 | --- | --- |
-| `JarvisConversationService.kt` | Foreground service (`microphone|mediaPlayback|mediaProjection`). Session lifecycle, wake lock + Wi-Fi lock, notification, audio wiring, tool dispatch, MCP confirmation, TTS, inactivity timer, standby, task overlay, typed-message queue. Companion exposes all UI state and control functions. |
+| `JarvisConversationService.kt` | Foreground service (`microphone|mediaPlayback|mediaProjection`) for Part 2. Session lifecycle, wake lock + Wi-Fi lock, notification, audio wiring, tool dispatch, MCP confirmation, TTS, inactivity timer, legacy standby, floating orb, task overlay, typed-message queue. Companion exposes all UI state and control functions. |
 
 ### `data`
 
@@ -191,12 +193,22 @@ app/src/main/java/com/jarvis/assistant/
 
 | File | Purpose |
 | --- | --- |
-| `SherpaOnnxWakeWordEngine.kt` | Streaming KWS, 10 ms slices, cooldown, wake hand-off. |
+| `SherpaOnnxWakeWordEngine.kt` | Streaming KWS, 10 ms slices, cooldown, wake hand-off, recent-PCM ring buffer. |
 | `JarvisVoiceInteractionSession.kt` | `VoiceInteractionSession` implementation: shows the orb, routes the command, dismisses. |
 | `JarvisVoiceInteractionSessionService.kt` | Creates the session. |
 | `JarvisFloatingOrbController.kt`, `JarvisOrbTouchOverlay.kt`, `JarvisOrbView.kt` | Floating orb window, touch handling, animation. |
 | `JarvisAgentBridge.kt` | Bridge between the voice-interaction session and the conversation service. |
 | `KernelSuRuntimeHelper.kt` | Optional KernelSU/root detection used only to report capability, never to escalate silently. |
+
+### `wake`
+
+| File | Purpose |
+| --- | --- |
+| `WakeWordService.kt` | Part 1 foreground service in `:wake`. Owns the idle microphone, runs KWS, verifies the owner on the same buffer, starts Part 2 with pre-roll, and resumes listening after the session. |
+| `WakeContract.kt` | Actions, extras, running-service checks and start/stop/pause/resume helpers shared across processes. Uses string constants so `:wake` never loads Part 2 classes. |
+| `WakeStatus.kt` | Main-process `StateFlow` mirror of the `:wake` service, refreshed from `ACTION_STATE_CHANGED`. |
+| `WakeNotifications.kt` | Low-importance service channel, foreground notification, and boot-start fallback prompt. |
+| `WakeBootReceiver.kt` | Restarts Part 1 on boot, package replace and quick boot; falls back to a notification when Android blocks a background mic start. |
 
 ## Manifest components
 
@@ -205,7 +217,9 @@ app/src/main/java/com/jarvis/assistant/
 | `JarvisApp` | — | Application class |
 | `MainActivity` | yes | Launcher intent filter |
 | `SettingsActivity`, `MemoryActivity`, `VoiceEnrollmentActivity`, `ApiConnectionActivity`, `PersonaActivity`, `PermissionActivity`, `OverlayAvatarActivity`, `PrivacyShieldActivity`, `HandsFreeActivity`, `McpSettingsActivity`, `ShizukuSettingsActivity` | no | Internal navigation only |
-| `JarvisConversationService` | no | Foreground service, `microphone|mediaPlayback|mediaProjection` |
+| `JarvisConversationService` | no | Part 2 foreground service, `microphone|mediaPlayback|mediaProjection` |
+| `WakeWordService` | no | Part 1 foreground service in `:wake`, `microphone` |
+| `WakeBootReceiver` | yes | `BOOT_COMPLETED`, `MY_PACKAGE_REPLACED`, `QUICKBOOT_POWERON`; runs in `:wake` |
 | `JarvisAccessibilityService` | yes | `BIND_ACCESSIBILITY_SERVICE` (system-only bind) |
 | `JarvisVoiceInteractionService` | yes | `BIND_VOICE_INTERACTION` |
 | `JarvisVoiceInteractionSessionService` | yes | `BIND_VOICE_INTERACTION` |

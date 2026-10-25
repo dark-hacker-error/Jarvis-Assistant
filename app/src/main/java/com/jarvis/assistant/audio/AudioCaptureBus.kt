@@ -64,6 +64,13 @@ object AudioCaptureBus {
     private val recentFrames = ArrayDeque<Frame>(MAX_RECENT_FRAMES)
     private val handoffFrames = ArrayDeque<Frame>(MAX_HANDOFF_FRAMES)
 
+    /**
+     * Part 1 runs in `:wake`; its in-memory hand-off buffer cannot cross the
+     * process boundary. It sends the recent PCM in the start intent instead and
+     * Part 2 seeds it here before the conversation recorder attaches.
+     */
+    private var externalPreroll: ByteArray? = null
+
     private var appContext: Context? = null
     private var audioRecord: AudioRecord? = null
     private var worker: Thread? = null
@@ -127,17 +134,39 @@ object AudioCaptureBus {
     }
 
     /**
+     * Seeds pre-roll captured by another process. The next [drainHandoff]
+     * (called by the conversation recorder) forwards it before live frames.
+     */
+    fun seedExternalPreroll(pcm: ByteArray) {
+        synchronized(lock) {
+            externalPreroll = pcm.copyOf()
+        }
+    }
+
+    /**
      * Returns and clears the PCM captured during the hand-off window. The
      * existing conversation recorder calls this exactly once when it starts.
      */
     fun drainHandoff(): List<Frame> {
         synchronized(lock) {
-            if (handoffFrames.isEmpty()) {
-                handoffActive = false
-                return emptyList()
+            val result = mutableListOf<Frame>()
+
+            val external = externalPreroll
+            externalPreroll = null
+            if (external != null && external.isNotEmpty()) {
+                var offset = 0
+                while (offset + CHUNK_SIZE_BYTES <= external.size) {
+                    val pcm = external.copyOfRange(offset, offset + CHUNK_SIZE_BYTES)
+                    val frequency = AudioUtils.analyzeFrequency(pcm, pcm.size, SAMPLE_RATE)
+                    result.add(Frame(pcm, frequency.amplitude, frequency))
+                    offset += CHUNK_SIZE_BYTES
+                }
             }
-            val result = handoffFrames.toList()
-            handoffFrames.clear()
+
+            if (handoffFrames.isNotEmpty()) {
+                result.addAll(handoffFrames)
+                handoffFrames.clear()
+            }
             handoffActive = false
             return result
         }
@@ -147,7 +176,23 @@ object AudioCaptureBus {
         synchronized(lock) {
             handoffActive = false
             handoffFrames.clear()
+            externalPreroll = null
             if (listeners.isEmpty()) stopLocked()
+        }
+    }
+
+    /**
+     * Part 1 calls this after a verified wake, immediately before starting
+     * Part 2 in the main process. It clears every listener and closes the
+     * AudioRecord so the two processes never own the microphone at once.
+     */
+    fun shutdownForHandoff() {
+        synchronized(lock) {
+            listeners.clear()
+            handoffActive = false
+            handoffFrames.clear()
+            externalPreroll = null
+            stopLocked()
         }
     }
 

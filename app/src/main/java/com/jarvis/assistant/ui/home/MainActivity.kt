@@ -222,6 +222,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         viewModel.refreshSettings()
+        maybeStartUltraLightWake()
         val prefs = com.jarvis.assistant.JarvisApp.instance.preferences
         if (appliedThemeKey != prefs.appTheme || appliedCustomHex != prefs.customThemeColor) {
             appliedThemeKey = prefs.appTheme
@@ -229,6 +230,18 @@ class MainActivity : AppCompatActivity() {
             recreate()
         }
         if (appliedNavStyle != prefs.bottomNavStyle) applyBottomNavStyle()
+    }
+
+    /**
+     * Starts Part 1 from the foreground when the user has enabled it and the
+     * owner-voice prerequisite is satisfied. Safe to call on every resume.
+     */
+    private fun maybeStartUltraLightWake() {
+        val prefs = com.jarvis.assistant.JarvisApp.instance.preferences
+        if (!prefs.isWakeServiceEnabled) return
+        if (!PermissionHelper.hasRecordAudioPermission(this)) return
+        if (prefs.isOwnerVoiceEnabled && !prefs.hasAnyOwnerVoiceProfile()) return
+        com.jarvis.assistant.wake.WakeContract.start(this)
     }
 
     /** Applies the user's bottom-navigation choice immediately. */

@@ -31,10 +31,12 @@ import com.jarvis.assistant.JarvisApp
 import org.json.JSONObject
 import com.jarvis.assistant.audio.AudioPlayer
 import com.jarvis.assistant.voice.SherpaOnnxWakeWordEngine
+import com.jarvis.assistant.voice.JarvisFloatingOrbController
+import com.jarvis.assistant.voice.JarvisOrbView
+import com.jarvis.assistant.wake.WakeContract
 import com.jarvis.assistant.audio.AudioRecorder
 import com.jarvis.assistant.data.model.ConversationState
 import com.jarvis.assistant.mcp.McpExecutionResult
-import com.jarvis.assistant.mcp.McpPendingAction
 import com.jarvis.assistant.network.GeminiLiveWebSocket
 import com.jarvis.assistant.ui.home.MainActivity
 import com.jarvis.assistant.util.PermissionHelper
@@ -95,6 +97,7 @@ class JarvisConversationService : Service() {
         private const val NOTIFICATION_ID = 41
         private const val INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000L // 30 minutes before standby
         private const val STANDBY_COOLDOWN_MS = 2500L
+        private const val ORB_FADE_OUT_MS = 320L
 
         @Volatile private var activeInstance: JarvisConversationService? = null
 
@@ -693,8 +696,16 @@ class JarvisConversationService : Service() {
 
         when (intent?.action) {
             ACTION_START_CONVERSATION -> {
+                val wakeTriggered = intent.getBooleanExtra(WakeContract.EXTRA_WAKE_TRIGGERED, false)
+                val preRoll = intent.getByteArrayExtra(WakeContract.EXTRA_WAKE_PREROLL)
+                if (preRoll != null && preRoll.isNotEmpty()) {
+                    // Part 1 runs in `:wake`; its in-memory hand-off buffer
+                    // cannot cross the process boundary. Seed the pre-roll here
+                    // before the conversation recorder attaches to the bus.
+                    com.jarvis.assistant.audio.AudioCaptureBus.seedExternalPreroll(preRoll)
+                }
                 com.jarvis.assistant.audio.JarvisSoundEffects.playWakeSound()
-                beginActiveConversation()
+                beginActiveConversation(wakeTriggered = wakeTriggered)
             }
             ACTION_ENTER_STANDBY -> enterStandby(announce = false)
             ACTION_STOP_ALL -> {
@@ -737,6 +748,16 @@ class JarvisConversationService : Service() {
 
     private fun beginActiveConversation(wakeTriggered: Boolean = false) {
         if (_isSessionOn.value) return
+
+        // Part 1 owns the microphone while it is listening. Manual starts and
+        // assist gestures must pause it first; the wake-triggered path already
+        // released the mic in `:wake` before starting this service.
+        val partOneWasListening = !wakeTriggered &&
+            WakeContract.isActiveWakeOwner(this)
+        if (partOneWasListening) {
+            WakeContract.pauseForSession(this)
+        }
+
         com.jarvis.assistant.automation.agent.AgentTaskEngine.resetForSession()
         isAutonomousContinuationTurn = false
         synchronized(autonomousAudioLock) {
@@ -781,11 +802,12 @@ class JarvisConversationService : Service() {
 
         _isSessionOn.value = true
         _isStandby.value = false
+        attachFloatingOrb()
         lastResponseTimedOut = false
         val now = System.currentTimeMillis()
         lastUserSpeechDetectedTime = now
         lastOwnerVerifiedTimestamp = now
-        isCurrentTurnOwnerVoiceVerified = !preferences.isOwnerVoiceEnabled || !preferences.hasOwnerVoiceProfile()
+        isCurrentTurnOwnerVoiceVerified = !preferences.isOwnerVoiceEnabled || !preferences.hasAnyOwnerVoiceProfile()
         pendingToolCalls.clear()
         hasSpeechInCurrentUtterance = false
         hasSignalledUtteranceEnd = false
@@ -883,7 +905,6 @@ class JarvisConversationService : Service() {
                             // conversation audible. Read the preference dynamically so toggling
                             // it during a session takes effect immediately.
                             if (preferences.isSilentExecutionMode &&
-                                pendingMcpAction == null &&
                                 (isAutonomousTaskRunning || hasExecutedCommandInCurrentTurn || !lastCompletedTaskSummary.isNullOrBlank())
                             ) {
                                 audioPlayer?.flush()
@@ -1040,7 +1061,7 @@ class JarvisConversationService : Service() {
                             consecutiveVoicedFrames = 0
                             totalVoicedFramesInCurrentUtterance = 0
                             synchronized(currentUtteranceAudioStream) { currentUtteranceAudioStream.reset() }
-                            isCurrentTurnOwnerVoiceVerified = !preferences.isOwnerVoiceEnabled || !preferences.hasOwnerVoiceProfile()
+                            isCurrentTurnOwnerVoiceVerified = !preferences.isOwnerVoiceEnabled || !preferences.hasAnyOwnerVoiceProfile()
                             if (_conversationState.value != ConversationState.SPEAKING) {
                                 setConversationState(if (userTurnInProgress) ConversationState.LISTENING else ConversationState.IDLE)
                             }
@@ -1088,7 +1109,7 @@ class JarvisConversationService : Service() {
                             val hasActualSpeechInThisTurn = hasSpeechInCurrentUtterance || currentTurnUserText.isNotEmpty()
                             val isLeaseActive = (System.currentTimeMillis() - lastOwnerVerifiedTimestamp) < 120_000L
 
-                            if (preferences.isOwnerVoiceEnabled && preferences.hasOwnerVoiceProfile() && !isCurrentTurnOwnerVoiceVerified && !isLeaseActive && hasActualSpeechInThisTurn) {
+                            if (preferences.isOwnerVoiceEnabled && preferences.hasAnyOwnerVoiceProfile() && !isCurrentTurnOwnerVoiceVerified && !isLeaseActive && hasActualSpeechInThisTurn) {
                                 val nonOwnerUtterance = currentTurnUserText.toString().trim()
                                 Log.w("JarvisService", "Turn completed by NON-OWNER: Suppressing response and logging ignored.")
                                 val app = application as? JarvisApp
@@ -1119,12 +1140,9 @@ class JarvisConversationService : Service() {
                                     assistantText.contains("i'm not sure")
 
                             // Run the local fallback if Gemini Live did not call a
-                            // tool. When a dangerous MCP action is awaiting yes/no,
-                            // run it even if Gemini called another tool so the
-                            // spoken confirmation is never lost.
-                            if (pendingMcpAction != null ||
-                                (!hasExecutedCommandInCurrentTurn && !isConfused)
-                            ) {
+                            // tool. This keeps spoken commands working even when the
+                            // model only replied with text.
+                            if (!hasExecutedCommandInCurrentTurn && !isConfused) {
                                 checkAndExecuteCommand(userUtterance)
                                 if (!hasExecutedCommandInCurrentTurn) {
                                     checkAssistantTextForCommands(currentTurnAssistantText.toString())
@@ -1132,7 +1150,7 @@ class JarvisConversationService : Service() {
                             }
 
                             // Reset verification flag for the next conversational turn
-                            if (preferences.isOwnerVoiceEnabled && preferences.hasOwnerVoiceProfile()) {
+                            if (preferences.isOwnerVoiceEnabled && preferences.hasAnyOwnerVoiceProfile()) {
                                 // Keep verification active if within the owner session lease window.
                                 // This prevents the owner from being re-challenged every single turn.
                                 val leaseStillActive = (System.currentTimeMillis() - lastOwnerVerifiedTimestamp) < 120_000L
@@ -1347,7 +1365,7 @@ class JarvisConversationService : Service() {
                             val hasNoIncomingSpeech = !hasSpeechInCurrentUtterance && currentTurnUserText.isEmpty()
                             val isOwnerVerifiedOrAutonomous = isCurrentTurnOwnerVoiceVerified || isLeaseActive || hasNoIncomingSpeech || isAutonomousTaskRunning
 
-                            if (preferences.isOwnerVoiceEnabled && preferences.hasOwnerVoiceProfile() && !isOwnerVerifiedOrAutonomous) {
+                            if (preferences.isOwnerVoiceEnabled && preferences.hasAnyOwnerVoiceProfile() && !isOwnerVerifiedOrAutonomous) {
                                 Log.w("JarvisService", "QUEUED tool call '$name' (callId=$callId): Owner verification pending, will execute after silence detection confirms speaker.")
                                 pendingToolCalls.add(PendingToolCall(callId, name, args))
                                 return
@@ -1363,6 +1381,9 @@ class JarvisConversationService : Service() {
             }
         }
 
+        // Deferred so a manual/assist start can wait for `:wake` to release
+        // its AudioRecord. The captured pre-roll keeps the first words intact.
+        val startRecorder: () -> Unit = {
         audioRecorder = AudioRecorder(this) { chunk, amplitude, frequencyData ->
             if (_isSessionOn.value) {
                 val now = System.currentTimeMillis()
@@ -1406,7 +1427,7 @@ class JarvisConversationService : Service() {
                                     currentUtteranceAudioStream.reset()
                                     currentUtteranceAudioStream.write(chunk)
                                 }
-                                isCurrentTurnOwnerVoiceVerified = !preferences.isOwnerVoiceEnabled || !preferences.hasOwnerVoiceProfile()
+                                isCurrentTurnOwnerVoiceVerified = !preferences.isOwnerVoiceEnabled || !preferences.hasAnyOwnerVoiceProfile()
                                 return@AudioRecorder
                             }
                         } else {
@@ -1472,18 +1493,18 @@ class JarvisConversationService : Service() {
                                     }
                                 }
                             }
-                            isCurrentTurnOwnerVoiceVerified = !preferences.isOwnerVoiceEnabled || !preferences.hasOwnerVoiceProfile()
+                            isCurrentTurnOwnerVoiceVerified = !preferences.isOwnerVoiceEnabled || !preferences.hasAnyOwnerVoiceProfile()
                         }
                         hasSpeechInCurrentUtterance = true
                         hasSignalledUtteranceEnd = false
                         totalVoicedFramesInCurrentUtterance++
                         // EARLY VOICE VERIFICATION: Verify owner as soon as we have enough voiced audio (300ms)
                         // This ensures verification completes BEFORE Gemini starts sending response audio
-                        if (!isCurrentTurnOwnerVoiceVerified && preferences.isOwnerVoiceEnabled && preferences.hasOwnerVoiceProfile() && totalVoicedFramesInCurrentUtterance == 15) {
+                        if (!isCurrentTurnOwnerVoiceVerified && preferences.isOwnerVoiceEnabled && preferences.hasAnyOwnerVoiceProfile() && totalVoicedFramesInCurrentUtterance == 15) {
                             val audioSnapshot = synchronized(currentUtteranceAudioStream) { currentUtteranceAudioStream.toByteArray() }
                             if (audioSnapshot.size >= 16000 * 2 * 0.25) {
                                 serviceScope.launch(Dispatchers.Default) {
-                                    val match = com.jarvis.assistant.audio.OwnerVoiceManager.verifySpeakerAudio(audioSnapshot, preferences)
+                                    val match = com.jarvis.assistant.audio.OwnerVoiceManager.verifyBestAvailableAudio(applicationContext, audioSnapshot, preferences)
                                     if (match.isMatch || match.distance < match.threshold * 1.35f) {
                                         lastOwnerVerifiedTimestamp = System.currentTimeMillis()
                                         isCurrentTurnOwnerVoiceVerified = true
@@ -1525,7 +1546,7 @@ class JarvisConversationService : Service() {
 
                         // Conversational pause reached (~450ms — safe for natural Hinglish speech with inter-word pauses)
                         if (silentDuration > 450) {
-                            if (preferences.isOwnerVoiceEnabled && preferences.hasOwnerVoiceProfile()) {
+                            if (preferences.isOwnerVoiceEnabled && preferences.hasAnyOwnerVoiceProfile()) {
                                 val isLeaseActive = (now - lastOwnerVerifiedTimestamp) < 120_000L
                                 if (isLeaseActive) {
                                     // Ultra-low latency: Active owner lease immediately confirms turn with 0ms delay
@@ -1537,7 +1558,7 @@ class JarvisConversationService : Service() {
                                         currentUtteranceAudioStream.toByteArray()
                                     }
                                     if (audioBytes.size >= 16000 * 2 * 0.3) {
-                                        val match = com.jarvis.assistant.audio.OwnerVoiceManager.verifySpeakerAudio(audioBytes, preferences)
+                                        val match = com.jarvis.assistant.audio.OwnerVoiceManager.verifyBestAvailableAudio(applicationContext, audioBytes, preferences)
                                         if (match.isMatch || match.distance < match.threshold * 1.35f) {
                                             lastOwnerVerifiedTimestamp = now
                                             isCurrentTurnOwnerVoiceVerified = true
@@ -1552,7 +1573,7 @@ class JarvisConversationService : Service() {
                                             processPendingToolCalls(verified = false)
                                         }
                                     } else {
-                                        isCurrentTurnOwnerVoiceVerified = !preferences.isOwnerVoiceEnabled || !preferences.hasOwnerVoiceProfile()
+                                        isCurrentTurnOwnerVoiceVerified = !preferences.isOwnerVoiceEnabled || !preferences.hasAnyOwnerVoiceProfile()
                                         if (!isCurrentTurnOwnerVoiceVerified) {
                                             processPendingToolCalls(verified = false)
                                         }
@@ -1561,7 +1582,7 @@ class JarvisConversationService : Service() {
                             }
 
                             if (totalVoicedFramesInCurrentUtterance >= VAD_MIN_UTTERANCE_FRAMES || currentTurnUserText.trim().isNotEmpty()) {
-                                if (preferences.isOwnerVoiceEnabled && preferences.hasOwnerVoiceProfile() && !isCurrentTurnOwnerVoiceVerified) {
+                                if (preferences.isOwnerVoiceEnabled && preferences.hasAnyOwnerVoiceProfile() && !isCurrentTurnOwnerVoiceVerified) {
                                     val nonOwnerQuery = currentTurnUserText.toString().trim()
                                     Log.w("JarvisService", "Non-owner speech ended: '$nonOwnerQuery'; IGNORING utterance, suppressing reply, and recording to history.")
                                     val app = application as? JarvisApp
@@ -1622,7 +1643,87 @@ class JarvisConversationService : Service() {
             setMuted(preferences.isMicMuted)
             start(serviceScope)
         }
+        }
+        if (partOneWasListening) {
+            // Give `:wake` time to close its AudioRecord before this process
+            // opens the microphone. The pre-roll covers this short gap.
+            serviceScope.launch(Dispatchers.Main.immediate) {
+                delay(450L)
+                if (_isSessionOn.value && audioRecorder == null) startRecorder()
+            }
+        } else {
+            startRecorder()
+        }
     }
+
+    // ---------------------------------------------------------------------
+    // Floating orb (Part 2 owns the visual while the session is active)
+    // ---------------------------------------------------------------------
+
+    private var orbSyncJob: Job? = null
+
+    @Volatile
+    private var floatingOrbAttached = false
+
+    private fun attachFloatingOrb() {
+        if (floatingOrbAttached) return
+        val shown = JarvisFloatingOrbController.show(
+            context = this,
+            mode = JarvisOrbView.Mode.LISTENING,
+            onTap = { interruptPlayback() },
+            onLongPress = {
+                serviceScope.launch(Dispatchers.Main.immediate) {
+                    enterStandby(announce = false)
+                }
+            }
+        )
+        floatingOrbAttached = shown
+        if (!shown) {
+            Log.i("JarvisService", "Floating orb unavailable (overlay permission missing); session continues")
+            return
+        }
+        startOrbSync()
+    }
+
+    private fun startOrbSync() {
+        orbSyncJob?.cancel()
+        orbSyncJob = serviceScope.launch(Dispatchers.Main.immediate) {
+            combine(
+                _isSessionOn,
+                _conversationState,
+                _audioLevel,
+                com.jarvis.assistant.automation.agent.AgentTaskEngine.taskState
+            ) { sessionOn, state, amplitude, task ->
+                OrbRuntimeState(sessionOn, state, amplitude, task != null)
+            }.collect { runtime ->
+                if (!runtime.sessionOn || !floatingOrbAttached) return@collect
+                val working = runtime.taskRunning || runtime.state == ConversationState.THINKING
+                val mode = if (working) JarvisOrbView.Mode.WORKING else JarvisOrbView.Mode.LISTENING
+                val status = when {
+                    runtime.taskRunning -> "Working"
+                    runtime.state == ConversationState.THINKING -> "Thinking"
+                    else -> null
+                }
+                JarvisFloatingOrbController.update(mode, status, runtime.amplitude)
+            }
+        }
+    }
+
+    private fun detachFloatingOrb() {
+        orbSyncJob?.cancel()
+        orbSyncJob = null
+        if (floatingOrbAttached) {
+            floatingOrbAttached = false
+            JarvisFloatingOrbController.hide(animated = true)
+        }
+    }
+
+    private data class OrbRuntimeState(
+        val sessionOn: Boolean,
+        val state: ConversationState,
+        val amplitude: Float,
+        val taskRunning: Boolean
+    )
 
     private var lastHandledCommandText = ""
     private var lastHandledAssistantCommand = ""
@@ -1636,13 +1737,6 @@ class JarvisConversationService : Service() {
     // confirms or cancels it in a follow-up turn.
     @Volatile
     private var pendingGenericCommand: com.jarvis.assistant.automation.command.JarvisCommand? = null
-
-    // A dangerous/confirm-required MCP action that has been prepared but must
-    // wait for the user's explicit spoken yes. This is kept inside the service
-    // (not only inside McpManager) so a stale confirmation can never outlive the
-    // conversation/turn that requested it.
-    @Volatile
-    private var pendingMcpAction: McpPendingAction? = null
 
     /**
      * Executes a tool call from Gemini. Called both from the direct onToolCall path
@@ -2358,79 +2452,20 @@ class JarvisConversationService : Service() {
                             result.put("message", "execute_mcp_tool needs a tool ID.")
                         } else {
                             val toolArgs = parseMcpArguments(args)
-                            val pending = pendingMcpAction?.takeUnless { it.isExpired() }
-                            val samePendingAction = pending != null &&
-                                pending.toolId == toolId &&
-                                normalizedArgsSignature(pending.arguments) ==
-                                normalizedArgsSignature(toolArgs)
-
-                            if (pending != null && !samePendingAction) {
-                                // Never let a second tool call silently replace a
-                                // dangerous action that is already waiting for the
-                                // user's yes/no. The old action stays pending and
-                                // the model is told to finish that confirmation.
-                                result.put("success", false)
-                                result.put("requires_confirmation", true)
-                                result.put("tool", pending.toolId)
-                                result.put("risk", pending.risk.label)
-                                result.put("message", "A confirmation for '${pending.toolId}' is already pending. Ask the user to confirm or cancel that action before starting another one.")
-                                result.put(
-                                    "system_directive",
-                                    "A different MCP action is already awaiting the user's explicit yes/no. Do NOT start a new dangerous action. Ask only about the pending action."
-                                )
-                            } else if (pending != null) {
-                                // The model repeated the same request before the
-                                // user answered. Re-send the existing prompt; do
-                                // not refresh or replace the pending action.
-                                val prompt = "Sir, yeh sensitive action hai: ${pending.description}. Confirm karne ke liye 'yes' boliye, cancel karne ke liye 'no'."
-                                result.put("success", false)
-                                result.put("requires_confirmation", true)
-                                result.put("tool", pending.toolId)
-                                result.put("risk", pending.risk.label)
-                                result.put("message", prompt)
-                                result.put("confirmation_prompt", prompt)
-                                result.put(
-                                    "system_directive",
-                                    "CONFIRMATION STILL PENDING. Do NOT execute the tool again. Wait for the user's explicit yes/no."
-                                )
-                                if (preferences.isSilentExecutionMode) {
-                                    announceSpoken(prompt)
+                            when (val outcome = app.mcpManager.executeTool(toolId, toolArgs)) {
+                                is McpExecutionResult.Success -> {
+                                    result.put("success", true)
+                                    result.put("message", outcome.message)
+                                    if (outcome.output.isNotBlank()) {
+                                        result.put("output", outcome.output)
+                                    }
                                 }
-                            } else {
-                                pendingMcpAction = null
-                                when (val outcome = app.mcpManager.executeTool(toolId, toolArgs)) {
-                                    is McpExecutionResult.Success -> {
-                                        result.put("success", true)
-                                        result.put("message", outcome.message)
-                                        if (outcome.output.isNotBlank()) {
-                                            result.put("output", outcome.output)
-                                        }
-                                    }
-                                    is McpExecutionResult.Failure -> {
-                                        result.put("success", false)
-                                        result.put("message", outcome.message)
-                                        if (outcome.permissionRequired) {
-                                            result.put("requires_permission", true)
-                                            result.put("permission", "Shizuku")
-                                        }
-                                    }
-                                    is McpExecutionResult.ConfirmationRequired -> {
-                                        pendingMcpAction = outcome.pending
-                                        result.put("success", false)
-                                        result.put("requires_confirmation", true)
-                                        result.put("tool", outcome.pending.toolId)
-                                        result.put("risk", outcome.pending.risk.label)
-                                        result.put("message", outcome.prompt)
-                                        result.put("confirmation_prompt", outcome.prompt)
-                                        result.put(
-                                            "system_directive",
-                                            "CONFIRMATION REQUIRED. Do NOT execute this tool again in this turn and do NOT claim it succeeded. Ask the user for an explicit yes/no using the confirmation prompt, in the configured language. The action will be executed locally only after the user says yes."
-                                        )
-                                        // Safety override: even in silent execution mode the
-                                        // user must hear a dangerous confirmation prompt.
-                                        if (preferences.isSilentExecutionMode) {
-                                            announceSpoken(outcome.prompt)
-                                        }
+                                is McpExecutionResult.Failure -> {
+                                    result.put("success", false)
+                                    result.put("message", outcome.message)
+                                    if (outcome.permissionRequired) {
+                                        result.put("requires_permission", true)
+                                        result.put("permission", "Shizuku")
                                     }
                                 }
                             }
@@ -2690,14 +2725,13 @@ class JarvisConversationService : Service() {
             activeToolJobs.forEach { it.cancel() }
             activeToolJob?.cancel()
             isAutonomousTaskRunning = false
-            pendingMcpAction = null
             lastHandledCommandText = cleanSpeech
             announce("Okay, I stopped the current task.")
             return
         }
         if (cleanSpeech == lastHandledCommandText) return
 
-        if (preferences.isOwnerVoiceEnabled && preferences.hasOwnerVoiceProfile() && !isCurrentTurnOwnerVoiceVerified) {
+        if (preferences.isOwnerVoiceEnabled && preferences.hasAnyOwnerVoiceProfile() && !isCurrentTurnOwnerVoiceVerified) {
             Log.w("JarvisService", "BLOCKED local command execution: Speaker is not verified owner! ('$cleanSpeech')")
             return
         }
@@ -2706,7 +2740,7 @@ class JarvisConversationService : Service() {
 
         val app = application as? JarvisApp ?: return
         val isAwaitingConfirm = app.whatsAppAssistant.hasPendingDraft() ||
-            pendingGenericCommand != null || pendingMcpAction != null
+            pendingGenericCommand != null
         val isAwaitingDisambig = app.whatsAppAssistant.isAwaitingDisambiguation()
 
         val parsed = com.jarvis.assistant.automation.command.CommandParser.parse(
@@ -2717,66 +2751,8 @@ class JarvisConversationService : Service() {
 
         val cmd = parsed.command
 
-        // MCP dangerous actions are prepared by the Gemini tool path and must
-        // be confirmed by an explicit local yes. This check has priority over
-        // generic/WhatsApp pending commands so a dangerous action can never be
-        // mistaken for a different confirmation.
-        if (cmd is com.jarvis.assistant.automation.command.JarvisCommand.ConfirmAction &&
-            pendingMcpAction != null
-        ) {
-            lastHandledCommandText = cleanSpeech
-            hasExecutedCommandInCurrentTurn = true
-            lastCommandExecutionTime = System.currentTimeMillis()
-            val pending = pendingMcpAction
-            pendingMcpAction = null
-            if (cmd.confirmed && pending != null) {
-                Log.i("JarvisService", "User confirmed MCP action: ${pending.toolId}")
-                announceSpoken("Theek hai sir, action execute kar raha hoon.")
-                serviceScope.launch {
-                    when (val outcome = app.mcpManager.executeConfirmed(pending)) {
-                        is McpExecutionResult.Success -> {
-                            val message = buildString {
-                                append(outcome.message)
-                                if (outcome.output.isNotBlank()) {
-                                    append(" ")
-                                    append(outcome.output.take(300))
-                                }
-                            }
-                            announceSpoken(
-                                message = message,
-                                speakText = "Theek hai sir, ${pending.toolName} complete ho gaya.",
-                                forceSpeech = true
-                            )
-                        }
-                        is McpExecutionResult.Failure -> {
-                            announceSpoken(
-                                message = "Sir, action nahi ho paya. ${outcome.message}",
-                                speakText = "Sir, action nahi ho paya. ${outcome.message.take(220)}",
-                                forceSpeech = true
-                            )
-                        }
-                        is McpExecutionResult.ConfirmationRequired -> {
-                            pendingMcpAction = outcome.pending
-                            announceSpoken(outcome.prompt)
-                        }
-                    }
-                }
-            } else {
-                Log.i("JarvisService", "User cancelled MCP action: ${pending?.toolId}")
-                announceSpoken("Theek hai sir, action cancel kar diya.")
-            }
-            return
-        }
-
-        // Any unrelated new utterance invalidates a pending MCP confirmation so
-        // an old "yes" can never trigger a dangerous action minutes later.
-        if (pendingMcpAction != null) {
-            Log.i("JarvisService", "Clearing stale MCP confirmation after unrelated input")
-            pendingMcpAction = null
-        }
-
-        // If a tool already ran in this turn and there was no MCP confirmation
-        // to resolve, keep the existing duplicate-execution guard.
+        // If a tool already ran in this turn, keep the existing
+        // duplicate-execution guard.
         if (hasExecutedCommandInCurrentTurn) return
 
         // A generic pending confirmation (e.g. an unclear "play X" request) takes
@@ -3122,7 +3098,7 @@ class JarvisConversationService : Service() {
         }
 
         if (reply.isNotEmpty() && app != null) {
-            val isOwnerCheckPassed = !preferences.isOwnerVoiceEnabled || !preferences.hasOwnerVoiceProfile() || isCurrentTurnOwnerVoiceVerified
+            val isOwnerCheckPassed = !preferences.isOwnerVoiceEnabled || !preferences.hasAnyOwnerVoiceProfile() || isCurrentTurnOwnerVoiceVerified
             if (isOwnerCheckPassed) {
                 // Typed messages already created their user bubble via beginTurn.
                 // Attach the reply to that bubble instead of adding a second
@@ -3156,7 +3132,7 @@ class JarvisConversationService : Service() {
         lastHandledAssistantCommand = ""
         val prefs = (application as? JarvisApp)?.preferences
         val isLeaseActive = (System.currentTimeMillis() - lastOwnerVerifiedTimestamp) < 30_000L
-        isCurrentTurnOwnerVoiceVerified = prefs == null || !prefs.isOwnerVoiceEnabled || !prefs.hasOwnerVoiceProfile() || isLeaseActive
+        isCurrentTurnOwnerVoiceVerified = prefs == null || !prefs.isOwnerVoiceEnabled || !prefs.hasAnyOwnerVoiceProfile() || isLeaseActive
         pendingToolCalls.clear()
         synchronized(currentUtteranceAudioStream) { currentUtteranceAudioStream.reset() }
     }
@@ -3165,7 +3141,6 @@ class JarvisConversationService : Service() {
         inactivityJob?.cancel()
         inactivityJob = null
         cancelAllActiveTools()
-        pendingMcpAction = null
         com.jarvis.assistant.automation.agent.AgentTaskEngine.resetForSession()
         _isSessionOn.value = false
         finalizeTurn()
@@ -3193,6 +3168,7 @@ class JarvisConversationService : Service() {
         _connectionStatus.value = "READY"
         _audioLevel.value = 0f
         headsetAudioRouter?.stop()
+        detachFloatingOrb()
     }
 
     private fun startInactivityTimer() {
@@ -3212,6 +3188,12 @@ class JarvisConversationService : Service() {
     // ---------------------------------------------------------------------
 
     private fun enterStandby(announce: Boolean = false) {
+        if (WakeContract.isActiveWakeOwner(this)) {
+            // Part 1 is the wake owner. Keep this heavy service out of standby
+            // entirely and return the microphone to `:wake`.
+            handBackToWakeService()
+            return
+        }
         if (_isStandby.value) return
         abandonAudioDuckFocus()
         com.jarvis.assistant.audio.JarvisSoundEffects.playStandbySound()
@@ -3243,8 +3225,41 @@ class JarvisConversationService : Service() {
         sherpaWakeEngine = null
     }
 
+    /**
+     * Ends the Part 2 session and asks the ultra-light `:wake` service to
+     * resume listening. Used for inactivity, explicit "go to background",
+     * orb long-press and full-stop paths.
+     */
+    private fun handBackToWakeService() {
+        Log.i("JarvisService", "Handing microphone back to the ultra-light wake service")
+        isPendingBackgroundTransition = false
+        _isStandby.value = false
+        com.jarvis.assistant.audio.JarvisSoundEffects.playStandbySound()
+        stopActiveConversation()
+        exitStandbyListening()
+        releaseWakeLock()
+        WakeContract.resumeAfterSession(this)
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelfAfterOrbFade()
+    }
+
+    /**
+     * Keeps the service (and its overlay window) alive just long enough for
+     * the floating orb fade-out to finish before the process is torn down.
+     */
+    private fun stopSelfAfterOrbFade() {
+        serviceScope.launch(Dispatchers.Main.immediate) {
+            delay(ORB_FADE_OUT_MS)
+            stopSelf()
+        }
+    }
+
     private fun startWakeListening() {
         if (!_isStandby.value) return
+        if (WakeContract.isActiveWakeOwner(this)) {
+            Log.i("JarvisService", "Part 1 owns the wake word; skipping in-process KWS")
+            return
+        }
         if (sherpaWakeEngine != null) return
 
         standbyActivatedTime = System.currentTimeMillis()
@@ -3349,13 +3364,13 @@ class JarvisConversationService : Service() {
     // ---------------------------------------------------------------------
 
     private fun fullStop() {
-        pendingMcpAction = null
         stopActiveConversation()
         exitStandbyListening()
         _isStandby.value = false
         releaseWakeLock()
+        WakeContract.resumeAfterSession(this)
         stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
+        stopSelfAfterOrbFade()
     }
 
     private fun acquireWakeLock() {
@@ -3422,6 +3437,8 @@ class JarvisConversationService : Service() {
         taskProgressOverlay = null
         stopActiveConversation()
         exitStandbyListening()
+        JarvisFloatingOrbController.hideNow()
+        WakeContract.resumeAfterSession(this)
         try {
             tts?.stop()
             tts?.shutdown()

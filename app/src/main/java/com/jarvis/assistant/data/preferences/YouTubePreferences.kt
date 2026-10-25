@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import com.jarvis.assistant.data.backup.BackupTriggers
 
 class YouTubePreferences(context: Context) {
 
@@ -16,13 +17,14 @@ class YouTubePreferences(context: Context) {
         private const val KEY_YOUTUBE_ENABLED = "key_youtube_enabled"
     }
 
-    private val legacyPrefs = context.getSharedPreferences(FALLBACK_FILE, Context.MODE_PRIVATE)
+    private val appContext = context.applicationContext
+    private val legacyPrefs = appContext.getSharedPreferences(FALLBACK_FILE, Context.MODE_PRIVATE)
     private val securePrefs: SharedPreferences? = try {
-        val masterKey = MasterKey.Builder(context)
+        val masterKey = MasterKey.Builder(appContext)
             .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
             .build()
         EncryptedSharedPreferences.create(
-            context,
+            appContext,
             ENCRYPTED_FILE,
             masterKey,
             EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
@@ -37,25 +39,90 @@ class YouTubePreferences(context: Context) {
         migrateLegacyKey()
     }
 
+    val canStoreSecurely: Boolean get() = securePrefs != null
+
     var youtubeApiKey: String
-        get() = securePrefs?.getString(KEY_YOUTUBE_API_KEY, "") ?: ""
+        get() {
+            val secureValue = try {
+                securePrefs?.getString(KEY_YOUTUBE_API_KEY, "")?.trim().orEmpty()
+            } catch (e: Exception) {
+                Log.e(TAG, "Could not read the encrypted YouTube API key; trying legacy storage", e)
+                ""
+            }
+            if (secureValue.isNotEmpty()) return secureValue
+            return try {
+                legacyPrefs.getString(KEY_YOUTUBE_API_KEY, "")?.trim().orEmpty()
+            } catch (e: Exception) {
+                Log.e(TAG, "Could not read the legacy YouTube API key", e)
+                ""
+            }
+        }
         set(value) {
-            val secure = checkNotNull(securePrefs) { "Secure YouTube API-key storage is unavailable on this device." }
             val clean = value.trim()
-            val saved = if (clean.isEmpty()) secure.edit().remove(KEY_YOUTUBE_API_KEY).commit()
-            else secure.edit().putString(KEY_YOUTUBE_API_KEY, clean).commit()
-            check(saved) { "Could not save YouTube API key to encrypted storage." }
+            val secure = securePrefs
+            val saved = try {
+                if (secure != null) {
+                    if (clean.isEmpty()) secure.edit().remove(KEY_YOUTUBE_API_KEY).commit()
+                    else secure.edit().putString(KEY_YOUTUBE_API_KEY, clean).commit()
+                } else {
+                    if (clean.isEmpty()) legacyPrefs.edit().remove(KEY_YOUTUBE_API_KEY).commit()
+                    else legacyPrefs.edit().putString(KEY_YOUTUBE_API_KEY, clean).commit()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Could not save the YouTube API key to encrypted storage", e)
+                false
+            }
+            if (!saved) {
+                // Keep the key functional instead of losing it when the Keystore
+                // is temporarily unavailable.
+                if (clean.isEmpty()) legacyPrefs.edit().remove(KEY_YOUTUBE_API_KEY).commit()
+                else legacyPrefs.edit().putString(KEY_YOUTUBE_API_KEY, clean).commit()
+            } else if (secure != null) {
+                legacyPrefs.edit().remove(KEY_YOUTUBE_API_KEY).apply()
+            }
+            BackupTriggers.request("youtube-key")
         }
 
     var isYouTubeEnabled: Boolean
-        get() = (securePrefs ?: legacyPrefs).getBoolean(KEY_YOUTUBE_ENABLED, true)
-        set(value) = (securePrefs ?: legacyPrefs).edit().putBoolean(KEY_YOUTUBE_ENABLED, value).apply()
+        get() = try {
+            (securePrefs ?: legacyPrefs).getBoolean(KEY_YOUTUBE_ENABLED, true)
+        } catch (e: Exception) {
+            true
+        }
+        set(value) {
+            try {
+                (securePrefs ?: legacyPrefs).edit().putBoolean(KEY_YOUTUBE_ENABLED, value).apply()
+            } catch (e: Exception) {
+                legacyPrefs.edit().putBoolean(KEY_YOUTUBE_ENABLED, value).apply()
+            }
+            BackupTriggers.request("youtube-enabled")
+        }
+
+    /** Restores a backed-up key only when this install has none. */
+    fun restoreApiKeyIfEmpty(value: String): Boolean {
+        val clean = value.trim()
+        if (clean.isEmpty() || youtubeApiKey.isNotBlank()) return false
+        return try {
+            youtubeApiKey = clean
+            youtubeApiKey.isNotBlank()
+        } catch (e: Exception) {
+            Log.e(TAG, "Could not restore the YouTube API key", e)
+            false
+        }
+    }
 
     private fun migrateLegacyKey() {
-        val legacy = legacyPrefs.getString(KEY_YOUTUBE_API_KEY, null)?.trim().orEmpty()
+        val legacy = try {
+            legacyPrefs.getString(KEY_YOUTUBE_API_KEY, null)?.trim().orEmpty()
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not read the legacy YouTube key", e)
+            ""
+        }
         if (legacy.isEmpty()) return
         val secure = securePrefs ?: run {
-            legacyPrefs.edit().remove(KEY_YOUTUBE_API_KEY).commit()
+            // Never delete the only copy just because encrypted storage is not
+            // available on this device.
+            Log.w(TAG, "Encrypted storage unavailable; keeping the legacy YouTube key")
             return
         }
         try {
@@ -63,7 +130,7 @@ class YouTubePreferences(context: Context) {
                 check(secure.edit().putString(KEY_YOUTUBE_API_KEY, legacy).commit())
             }
             if (!secure.getString(KEY_YOUTUBE_API_KEY, null).isNullOrEmpty()) {
-                legacyPrefs.edit().remove(KEY_YOUTUBE_API_KEY).commit()
+                legacyPrefs.edit().remove(KEY_YOUTUBE_API_KEY).apply()
             }
         } catch (e: Exception) {
             Log.e(TAG, "Legacy YouTube API-key migration failed", e)

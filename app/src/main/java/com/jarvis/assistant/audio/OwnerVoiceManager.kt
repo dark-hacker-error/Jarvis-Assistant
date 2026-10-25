@@ -25,6 +25,13 @@ object OwnerVoiceManager {
     const val STRICT_THRESHOLD = 0.62f    // Strict: high security
     const val RELAXED_THRESHOLD = 0.78f   // Relaxed: tolerant of noisy environments
 
+    // WeSpeaker CAM++ cosine-distance thresholds. These are intentionally
+    // tighter than the legacy Vosk x-vector values because the embedding
+    // space is different and better separated.
+    const val SHERPA_STRICT_THRESHOLD = 0.32f
+    const val SHERPA_DEFAULT_THRESHOLD = 0.42f
+    const val SHERPA_RELAXED_THRESHOLD = 0.52f
+
     /**
      * Calculates the cosine distance between two speaker embedding vectors:
      * distance = 1.0 - (dot(v1, v2) / (norm(v1) * norm(v2)))
@@ -198,6 +205,103 @@ object OwnerVoiceManager {
             similarityPercent = similarityPercent,
             threshold = threshold
         )
+    }
+
+    // ------------------------------------------------------------------
+    // One-shot Sherpa/WeSpeaker path (wake service + upgraded enrollment)
+    // ------------------------------------------------------------------
+
+    fun extractSherpaVector(context: android.content.Context, pcmAudio: ByteArray): FloatArray? =
+        SherpaSpeakerVerifier.extractEmbedding(context, pcmAudio)
+
+    fun verifySherpaVector(
+        currentVector: FloatArray,
+        prefs: AppPreferences
+    ): VoiceMatchResult {
+        val masterProfile = prefs.getOwnerVoiceSherpaProfile()
+        val sampleProfiles = prefs.getOwnerVoiceSherpaSamples()
+        val threshold = prefs.ownerVoiceSherpaThreshold
+
+        if ((masterProfile == null || masterProfile.isEmpty()) && sampleProfiles.isEmpty()) {
+            return VoiceMatchResult(
+                isMatch = true,
+                distance = 0.0f,
+                similarityPercent = 100,
+                threshold = threshold
+            )
+        }
+
+        var minDistance = 2.0f
+        if (masterProfile != null && masterProfile.isNotEmpty()) {
+            val distance = SherpaSpeakerVerifier.cosineDistance(currentVector, masterProfile)
+            if (distance < minDistance) minDistance = distance
+        }
+        for (sample in sampleProfiles) {
+            val distance = SherpaSpeakerVerifier.cosineDistance(currentVector, sample)
+            if (distance < minDistance) minDistance = distance
+        }
+
+        return VoiceMatchResult(
+            isMatch = minDistance <= threshold,
+            distance = minDistance,
+            similarityPercent = SherpaSpeakerVerifier.similarityPercent(minDistance),
+            threshold = threshold
+        )
+    }
+
+    fun verifySherpaAudio(
+        context: android.content.Context,
+        pcmAudio: ByteArray,
+        prefs: AppPreferences
+    ): VoiceMatchResult {
+        if (!prefs.isOwnerVoiceEnabled || !prefs.hasSherpaVoiceProfile()) {
+            return VoiceMatchResult(
+                isMatch = true,
+                distance = 0.0f,
+                similarityPercent = 100,
+                threshold = prefs.ownerVoiceSherpaThreshold
+            )
+        }
+
+        val vector = extractSherpaVector(context, pcmAudio)
+        if (vector == null) {
+            return VoiceMatchResult(
+                isMatch = false,
+                distance = 1.0f,
+                similarityPercent = 0,
+                threshold = prefs.ownerVoiceSherpaThreshold,
+                hasExtractedVector = false
+            )
+        }
+        return verifySherpaVector(vector, prefs)
+    }
+
+    /**
+     * Preferred verifier for both the wake service and the conversation
+     * service. New enrollments use the Sherpa embedding; older installations
+     * keep the Vosk x-vector path until they re-enroll once.
+     */
+    fun verifyBestAvailableAudio(
+        context: android.content.Context,
+        pcmAudio: ByteArray,
+        prefs: AppPreferences
+    ): VoiceMatchResult {
+        if (!prefs.isOwnerVoiceEnabled || !prefs.hasAnyOwnerVoiceProfile()) {
+            return VoiceMatchResult(
+                isMatch = true,
+                distance = 0.0f,
+                similarityPercent = 100,
+                threshold = prefs.ownerVoiceThreshold
+            )
+        }
+
+        if (prefs.hasSherpaVoiceProfile()) {
+            val sherpa = verifySherpaAudio(context, pcmAudio, prefs)
+            // If the new model is unavailable on this device, fall back to the
+            // legacy profile instead of locking the owner out.
+            if (sherpa.hasExtractedVector || !prefs.hasOwnerVoiceProfile()) return sherpa
+        }
+        return verifySpeakerAudio(pcmAudio, prefs)
     }
 
     /**

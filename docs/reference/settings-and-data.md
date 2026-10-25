@@ -109,6 +109,26 @@ Database: `jarvis_memory.db` (`MemoryDatabase`).
 - `completeLastTurn` attaches the reply,
 - cap: 100 turns (oldest dropped).
 
+## Uninstall-surviving backup
+
+`BackupCoordinator` writes one encrypted snapshot to
+`Downloads/Jarvis/jarvis-backup.json` through MediaStore. App-private storage is
+deleted on uninstall, but a MediaStore file in Downloads is not, so the snapshot
+survives a reinstall. It contains long-term memories, chat history, personal
+preferences, both API keys and the custom MCP configuration.
+
+- Encryption: AES-256-GCM with a key derived from the app signing certificate;
+  only an app signed with the same key can decrypt it.
+- Automatic restore runs on first launch only when local data is empty.
+- An explicit **Restore** merges missing records and never overwrites newer
+  local values.
+- Writes are debounced after relevant changes and also run when the app goes to
+  the background; a periodic safety backup runs while the app is open.
+- The snapshot can be deleted from Settings.
+
+`android:allowBackup="false"` disables Android's own cloud/adb backup; the
+Jarvis snapshot above is a separate, opt-in mechanism. There is no cloud sync.
+
 ## Data retention summary
 
 | Data | Where | Cleared by |
@@ -119,6 +139,5 @@ Database: `jarvis_memory.db` (`MemoryDatabase`).
 | API keys | EncryptedSharedPreferences | Settings → clear key |
 | Custom MCP servers/tokens | EncryptedSharedPreferences | MCP settings → remove server |
 | Wake word model | APK assets | Reinstall |
+| Uninstall-surviving snapshot | Encrypted JSON in `Downloads/Jarvis` | Settings → delete backup |
 | Screen frames | Memory only (latest bitmap) | Stop sharing / process death |
-
-There is no backup (`android:allowBackup="false"`) and no cloud sync.

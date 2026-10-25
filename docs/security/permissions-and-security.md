@@ -5,9 +5,10 @@
 | Permission | Used by | Notes |
 | --- | --- | --- |
 | `RECORD_AUDIO` | Voice conversation, wake word, voice enrollment | Core permission; the foreground service type includes `microphone`. |
-| `POST_NOTIFICATIONS` | Foreground conversation notification | Required on Android 13+ for a visible ongoing notification. |
-| `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MICROPHONE`, `FOREGROUND_SERVICE_MEDIA_PLAYBACK`, `FOREGROUND_SERVICE_MEDIA_PROJECTION` | `JarvisConversationService` | Declares the foreground service and its active types. |
-| `WAKE_LOCK` | Conversation service | Partial wake lock with a 6-hour timeout, renewed hourly before expiry. |
+| `POST_NOTIFICATIONS` | Part 1 and Part 2 foreground notifications | Required on Android 13+ for a visible ongoing notification. |
+| `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MICROPHONE`, `FOREGROUND_SERVICE_MEDIA_PLAYBACK`, `FOREGROUND_SERVICE_MEDIA_PROJECTION` | `WakeWordService`, `JarvisConversationService` | Declares the foreground services and their active types. |
+| `WAKE_LOCK` | Part 1 and Part 2 services | Partial wake lock with a 6-hour timeout; Part 1 renews it every 5 hours while listening. |
+| `RECEIVE_BOOT_COMPLETED` | `WakeBootReceiver` | Restarts Part 1 after reboot or app update; if Android blocks the background mic start, a notification asks the user to open Jarvis once. |
 | `ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION` | Weather card | Used only for the current location; weather is fetched from Open-Meteo. |
 | `INTERNET`, `ACCESS_NETWORK_STATE` | Gemini Live, Open-Meteo, YouTube API | Network access. |
 | `BLUETOOTH`, `BLUETOOTH_ADMIN` (≤ API 30), `BLUETOOTH_CONNECT` | Headset routing | Routes audio to Bluetooth headsets. |
@@ -16,7 +17,7 @@
 | `CALL_PHONE` | Phone automation | Direct calls when requested. |
 | `CAMERA` | Flashlight control | `PhoneControlManager` uses `CameraManager` torch APIs; declared `required="false"` so the app installs on devices without a camera/flash. |
 | `VIBRATE` | Feedback | Short vibration cues. |
-| `SYSTEM_ALERT_WINDOW` | `TaskProgressOverlay` | Optional overlay; the app falls back to an in-app panel when not granted. |
+| `SYSTEM_ALERT_WINDOW` | Floating conversation orb and `TaskProgressOverlay` | Optional overlay permission. The task overlay falls back to an in-app panel; the orb is skipped when permission is missing, but the session continues. Turning off the task overlay does not affect the orb. |
 | `WRITE_SETTINGS` | Device settings automation | Protected permission; requires the user to grant it from Settings. |
 | `QUERY_ALL_PACKAGES` | App launching | Needed to resolve installed apps on Android 11+. |
 | `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | Long-running service | Prompt only; the user decides. |
@@ -158,12 +159,11 @@ transparency control, not a notification owned by Jarvis:
   (`device_config`/`settings` privacy toggles) hide indicators for **every** app
   on the device, so Jarvis deliberately does not change them.
 
-The wake path therefore keeps the indicator visible while it is listening. To
-minimize its duration, the add-on pauses its Sherpa-ONNX spotter on
-`ACTION_SCREEN_OFF` and stops a legacy standby listener as well; both resume only
-when the screen is on and no conversation is active. Active conversations and
-enrollment still require microphone capture and are reported by the same
-system indicator.
+The wake path therefore keeps the indicator visible while it is listening. Part 1
+keeps its Sherpa-ONNX spotter and partial wake lock active while the screen is
+off so "Jarvis" still works from a locked phone; it pauses only while Part 2 or
+an assist session owns the microphone. Active conversations and enrollment are
+reported by the same system indicator.
 
 ## Operational recommendations
 

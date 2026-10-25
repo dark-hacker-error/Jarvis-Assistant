@@ -17,6 +17,7 @@ import com.jarvis.assistant.voice.JarvisFloatingOrbController
 import com.jarvis.assistant.voice.JarvisOrbView
 import com.jarvis.assistant.voice.JarvisVoiceInteractionSession
 import com.jarvis.assistant.voice.SherpaOnnxWakeWordEngine
+import com.jarvis.assistant.wake.WakeContract
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -94,11 +95,14 @@ class JarvisVoiceInteractionService : VoiceInteractionService() {
             true
         }
 
-        wakeWordEngine = SherpaOnnxWakeWordEngine(
-            context = applicationContext,
-            scope = serviceScope,
-            onWakeWord = { requestOrb("wake-word") }
-        )
+        if (WakeContract.shouldOwnWake(this)) {
+            // Part 1 (`:wake`) is the sole microphone owner. Creating a second
+            // spotter here would fight it for the mic and double the battery
+            // cost, so keep this engine idle until Part 1 is disabled.
+            Log.i(TAG, "Part 1 owns the wake word; assist service will not listen")
+        } else {
+            wakeWordEngine = createWakeEngine()
+        }
 
         registerReceivers()
         observeLegacyServiceState()
@@ -125,6 +129,7 @@ class JarvisVoiceInteractionService : VoiceInteractionService() {
         legacyStateJob = null
         legacyStandbyStopJob?.cancel()
         legacyStandbyStopJob = null
+        WakeContract.resumeAfterSession(this)
         super.onShutdown()
     }
 
@@ -141,6 +146,7 @@ class JarvisVoiceInteractionService : VoiceInteractionService() {
         legacyStateJob = null
         legacyStandbyStopJob?.cancel()
         legacyStandbyStopJob = null
+        WakeContract.resumeAfterSession(this)
         serviceScope.cancel()
         if (activeInstance === this) activeInstance = null
         super.onDestroy()
@@ -170,6 +176,13 @@ class JarvisVoiceInteractionService : VoiceInteractionService() {
             Log.w(TAG, "Ignoring $source trigger because the voice service is not ready")
             return
         }
+
+        // The assist session and the existing agent need the microphone.
+        // Part 1 pauses here and resumes in handleSessionHidden().
+        if (WakeContract.shouldOwnWake(this)) {
+            WakeContract.pauseForSession(this)
+        }
+
         if (sessionVisible) {
             // An overlay can outlive a missed session callback. Re-assert it on
             // the main looper instead of dropping the wake event.
@@ -269,9 +282,24 @@ class JarvisVoiceInteractionService : VoiceInteractionService() {
         resumeWakeWordIfPossible()
     }
 
+    private fun createWakeEngine(): SherpaOnnxWakeWordEngine {
+        return wakeWordEngine ?: SherpaOnnxWakeWordEngine(
+            context = applicationContext,
+            scope = serviceScope,
+            onWakeWord = { requestOrb("wake-word") }
+        ).also { wakeWordEngine = it }
+    }
+
     private fun resumeWakeWordIfPossible() {
         if (!ready || sessionVisible || !screenOn) return
         if (JarvisConversationService.isSessionOn.value) return
+        if (WakeContract.isActiveWakeOwner(this)) {
+            // Part 1 is the only microphone owner. Keep this engine idle and
+            // make sure `:wake` is listening again after an assist session.
+            wakeWordEngine?.pause()
+            WakeContract.resumeAfterSession(this)
+            return
+        }
         if (JarvisConversationService.isStandby.value) {
             // The legacy service is still listening. Stop only that standby
             // listener, then start the add-on's keyword spotter so there is
@@ -279,7 +307,7 @@ class JarvisVoiceInteractionService : VoiceInteractionService() {
             stopLegacyStandbyThenResume()
             return
         }
-        wakeWordEngine?.resume()
+        createWakeEngine().resume()
     }
 
     private fun observeLegacyServiceState() {
@@ -349,6 +377,15 @@ class JarvisVoiceInteractionService : VoiceInteractionService() {
             assistFilter,
             ContextCompat.RECEIVER_NOT_EXPORTED
         )
+
+        // Part 1 lives in another process; react when it starts/stops so this
+        // service never keeps a duplicate spotter or loses wake fallback.
+        ContextCompat.registerReceiver(
+            this,
+            wakeStateReceiver,
+            IntentFilter(WakeContract.ACTION_STATE_CHANGED),
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
         receiversRegistered = true
     }
 
@@ -362,6 +399,10 @@ class JarvisVoiceInteractionService : VoiceInteractionService() {
             unregisterReceiver(assistReceiver)
         } catch (_: Throwable) {
         }
+        try {
+            unregisterReceiver(wakeStateReceiver)
+        } catch (_: Throwable) {
+        }
         receiversRegistered = false
     }
 
@@ -370,6 +411,12 @@ class JarvisVoiceInteractionService : VoiceInteractionService() {
             when (intent?.action) {
                 Intent.ACTION_SCREEN_OFF -> {
                     screenOn = false
+                    if (WakeContract.isActiveWakeOwner(this@JarvisVoiceInteractionService)) {
+                        // Part 1 keeps its own wake lock and listens with the
+                        // screen off; never touch its microphone here.
+                        Log.i(TAG, "Screen off: Part 1 keeps the wake word active")
+                        return
+                    }
                     wakeWordEngine?.pause()
                     // If the legacy service is only in standby, stop that
                     // listener too. This closes the microphone on screen off
@@ -385,14 +432,8 @@ class JarvisVoiceInteractionService : VoiceInteractionService() {
                 }
                 Intent.ACTION_SCREEN_ON -> {
                     screenOn = true
-                    if (!sessionVisible && !JarvisConversationService.isSessionOn.value) {
-                        if (JarvisConversationService.isStandby.value) {
-                            stopLegacyStandbyThenResume()
-                        } else {
-                            wakeWordEngine?.resume()
-                        }
-                    }
-                    Log.i(TAG, "Screen on: keyword spotter resumed")
+                    resumeWakeWordIfPossible()
+                    Log.i(TAG, "Screen on: wake path resumed")
                 }
             }
         }
@@ -410,6 +451,14 @@ class JarvisVoiceInteractionService : VoiceInteractionService() {
             when (intent?.action) {
                 Intent.ACTION_ASSIST,
                 Intent.ACTION_VOICE_COMMAND -> requestOrb("assist-gesture")
+            }
+        }
+    }
+
+    private val wakeStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == WakeContract.ACTION_STATE_CHANGED) {
+                resumeWakeWordIfPossible()
             }
         }
     }

@@ -1,5 +1,7 @@
 package com.jarvis.assistant.mcp
 
+import android.util.Log
+import com.jarvis.assistant.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -14,11 +16,20 @@ import java.util.concurrent.TimeUnit
 /**
  * Minimal MCP Streamable-HTTP JSON-RPC client.
  *
- * The transport is intentionally conservative: each operation initializes a
- * session, sends the required `notifications/initialized`, then performs
- * `tools/list` or `tools/call`. That is a little more chatty than a persistent
- * session, but it works with public and self-hosted HTTP MCP servers without
- * keeping a background socket alive on the phone.
+ * Each operation initializes a session, sends the required
+ * `notifications/initialized`, then performs `tools/list` or `tools/call`.
+ * That is a little more chatty than a persistent session, but it works with
+ * public and self-hosted HTTP MCP servers without keeping a background socket
+ * alive on the phone.
+ *
+ * Reliability rules:
+ *  - `initialize` and `tools/list` are retried a bounded number of times on
+ *    transient network/5xx failures because they are idempotent;
+ *  - `tools/call` is never retried automatically because it may have side
+ *    effects;
+ *  - the negotiated protocol version is echoed in later requests;
+ *  - SSE events are matched to the JSON-RPC request id instead of blindly
+ *    taking the last message on the stream.
  */
 class McpHttpClient(
     private val client: OkHttpClient = OkHttpClient.Builder()
@@ -36,7 +47,8 @@ class McpHttpClient(
 
     data class Session(
         val sessionId: String?,
-        val initializeResult: JSONObject?
+        val initializeResult: JSONObject?,
+        val protocolVersion: String = PROTOCOL_VERSION
     )
 
     suspend fun listTools(server: McpCustomServer): List<McpRemoteTool> = withContext(Dispatchers.IO) {
@@ -47,15 +59,19 @@ class McpHttpClient(
         do {
             val params = JSONObject()
             if (!cursor.isNullOrBlank()) params.put("cursor", cursor)
-            val envelope = request(
-                server = server,
-                body = jsonRpcRequest(
-                    id = 2 + page,
-                    method = "tools/list",
-                    params = params
-                ),
-                sessionId = session.sessionId
-            )
+            val requestId = 2 + page
+            val envelope = withRetry("tools/list") {
+                request(
+                    server = server,
+                    body = jsonRpcRequest(
+                        id = requestId,
+                        method = "tools/list",
+                        params = params
+                    ),
+                    sessionId = session.sessionId,
+                    protocolVersion = session.protocolVersion
+                )
+            }
             val result = requireResult(envelope, "tools/list")
             val tools = result.optJSONArray("tools") ?: JSONArray()
             for (index in 0 until tools.length()) {
@@ -97,7 +113,8 @@ class McpHttpClient(
                     put("arguments", arguments)
                 }
             ),
-            sessionId = session.sessionId
+            sessionId = session.sessionId,
+            protocolVersion = session.protocolVersion
         )
         val result = requireResult(envelope, "tools/call")
         if (result.optBoolean("isError", false)) {
@@ -107,56 +124,76 @@ class McpHttpClient(
     }
 
     private fun initialize(server: McpCustomServer): Session {
-        val envelope = request(
-            server = server,
-            body = jsonRpcRequest(
-                id = 1,
-                method = "initialize",
-                params = JSONObject().apply {
-                    put("protocolVersion", PROTOCOL_VERSION)
-                    put("capabilities", JSONObject())
-                    put("clientInfo", JSONObject().apply {
-                        put("name", "Jarvis")
-                        put("version", "1.8.7")
-                    })
+        var lastError: IOException? = null
+        for (version in CLIENT_PROTOCOL_VERSIONS) {
+            try {
+                val envelope = withRetry("initialize") {
+                    request(
+                        server = server,
+                        body = jsonRpcRequest(
+                            id = 1,
+                            method = "initialize",
+                            params = JSONObject().apply {
+                                put("protocolVersion", version)
+                                put("capabilities", JSONObject())
+                                put("clientInfo", JSONObject().apply {
+                                    put("name", "Jarvis")
+                                    put("version", BuildConfig.VERSION_NAME)
+                                })
+                            }
+                        ),
+                        sessionId = null,
+                        protocolVersion = version
+                    )
                 }
-            ),
-            sessionId = null
-        )
-        val result = requireResult(envelope, "initialize")
-        val sessionId = envelope.optString("__session_id").takeIf { it.isNotBlank() }
+                val result = requireResult(envelope, "initialize")
+                val negotiated = result.optString("protocolVersion")
+                    .takeIf { it.isNotBlank() } ?: version
+                val sessionId = envelope.optString("__session_id").takeIf { it.isNotBlank() }
 
-        // Required by the MCP lifecycle. A few older servers ignore it; a 202
-        // or empty body is therefore treated as success.
-        try {
-            requestRaw(
-                server = server,
-                body = JSONObject().apply {
-                    put("jsonrpc", "2.0")
-                    put("method", "notifications/initialized")
-                },
-                sessionId = sessionId
-            )
-        } catch (e: Exception) {
-            // Some minimal servers do not implement notifications. Do not fail
-            // the whole connection for that reason.
+                // Required by the MCP lifecycle. A few older servers ignore it; a
+                // 202 or empty body is therefore treated as success.
+                try {
+                    requestRaw(
+                        server = server,
+                        body = JSONObject().apply {
+                            put("jsonrpc", "2.0")
+                            put("method", "notifications/initialized")
+                        },
+                        sessionId = sessionId,
+                        protocolVersion = negotiated
+                    )
+                } catch (e: Exception) {
+                    Log.d(TAG, "MCP notifications/initialized was not acknowledged", e)
+                }
+
+                return Session(sessionId, result, negotiated)
+            } catch (e: IOException) {
+                lastError = e
+                if (!looksLikeProtocolMismatch(e)) throw e
+                Log.i(TAG, "MCP server rejected protocol $version; trying the next supported version", e)
+            }
         }
-
-        return Session(sessionId, result)
+        throw lastError ?: IOException("MCP initialize failed")
     }
 
     private fun request(
         server: McpCustomServer,
         body: JSONObject,
-        sessionId: String?
+        sessionId: String?,
+        protocolVersion: String
     ): JSONObject {
-        val raw = requestRaw(server, body, sessionId)
-        val parsed = parseJsonPayload(raw.body)
+        val expectedId = body.optInt("id", Int.MIN_VALUE)
+        val raw = requestRaw(server, body, sessionId, protocolVersion)
+        val parsed = parseJsonPayload(raw.body, expectedId)
             ?: throw IOException("MCP server returned an empty or non-JSON response")
         val error = parsed.optJSONObject("error")
         if (error != null) {
+            val code = error.optInt("code")
+            val message = error.optString("message").ifBlank { "Unknown error" }
+            val data = error.opt("data")?.toString()?.take(300).orEmpty()
             throw IOException(
-                "MCP error ${error.optInt("code")}: ${error.optString("message").ifBlank { "Unknown error" }}"
+                "MCP error $code: $message${if (data.isNotBlank()) " ($data)" else ""}"
             )
         }
         if (!parsed.has("result")) {
@@ -169,13 +206,14 @@ class McpHttpClient(
     private fun requestRaw(
         server: McpCustomServer,
         body: JSONObject,
-        sessionId: String?
+        sessionId: String?,
+        protocolVersion: String
     ): RawResponse {
         val builder = Request.Builder()
             .url(server.url)
             .header("Accept", "application/json, text/event-stream")
             .header("Content-Type", "application/json")
-            .header("MCP-Protocol-Version", PROTOCOL_VERSION)
+            .header("MCP-Protocol-Version", protocolVersion)
             .post(body.toString().toRequestBody(jsonMediaType))
         if (server.token.isNotBlank()) {
             builder.header("Authorization", "Bearer ${server.token.trim()}")
@@ -194,8 +232,8 @@ class McpHttpClient(
                 throw IOException("MCP response is too large")
             }
             if (!response.isSuccessful) {
-                val detail = text.take(500).replace("\n", " ")
-                throw IOException("MCP HTTP ${response.code}${if (detail.isNotBlank()) ": $detail" else ""}")
+                val detail = text.take(500).replace("\n", " ").trim()
+                throw IOException(httpErrorMessage(response.code, detail))
             }
             return RawResponse(
                 body = text,
@@ -204,6 +242,53 @@ class McpHttpClient(
                     ?: sessionId
             )
         }
+    }
+
+    private fun httpErrorMessage(code: Int, detail: String): String {
+        val base = when (code) {
+            401, 403 -> "MCP server rejected the bearer token (HTTP $code). Check the token in Settings > MCP Tools."
+            404 -> "MCP endpoint was not found (HTTP 404). Check the server URL."
+            405 -> "MCP server does not allow POST at this URL (HTTP 405)."
+            429 -> "MCP server is rate-limiting requests (HTTP 429). Try again later."
+            in 500..599 -> "MCP server error (HTTP $code)."
+            else -> "MCP HTTP $code."
+        }
+        return if (detail.isBlank()) base else "$base $detail"
+    }
+
+    private fun <T> withRetry(operation: String, attempts: Int = 2, block: () -> T): T {
+        var last: IOException? = null
+        for (attempt in 1..attempts) {
+            try {
+                return block()
+            } catch (e: IOException) {
+                last = e
+                if (attempt >= attempts || !isRetryable(e)) throw e
+                Log.w(TAG, "MCP $operation failed on attempt $attempt/$attempts; retrying", e)
+                try {
+                    Thread.sleep(300L * attempt)
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    throw e
+                }
+            }
+        }
+        throw last ?: IOException("MCP $operation failed")
+    }
+
+    private fun isRetryable(error: IOException): Boolean {
+        val message = error.message.orEmpty()
+        if (message.startsWith("MCP HTTP 4")) return false
+        if (message.startsWith("MCP error")) return false
+        if (message.contains("rejected the bearer token", ignoreCase = true)) return false
+        if (message.contains("not valid JSON", ignoreCase = true)) return false
+        return true
+    }
+
+    private fun looksLikeProtocolMismatch(error: IOException): Boolean {
+        val message = error.message.orEmpty().lowercase()
+        return message.contains("protocol") || message.contains("version") ||
+            message.contains("unsupported")
     }
 
     private fun requireResult(envelope: JSONObject, operation: String): JSONObject {
@@ -220,12 +305,28 @@ class McpHttpClient(
             put("params", params)
         }
 
-    private fun parseJsonPayload(text: String): JSONObject? {
+    private fun parseJsonPayload(text: String, expectedId: Int): JSONObject? {
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return null
+
         if (trimmed.startsWith("{")) {
             return try {
-                JSONObject(trimmed)
+                JSONObject(trimmed).takeIf { it.has("result") || it.has("error") }
+            } catch (_: Exception) {
+                null
+            }
+        }
+        if (trimmed.startsWith("[")) {
+            return try {
+                val array = JSONArray(trimmed)
+                var fallback: JSONObject? = null
+                for (index in 0 until array.length()) {
+                    val candidate = array.optJSONObject(index) ?: continue
+                    if (!candidate.has("result") && !candidate.has("error")) continue
+                    if (matchesId(candidate, expectedId)) return candidate
+                    fallback = candidate
+                }
+                fallback
             } catch (_: Exception) {
                 null
             }
@@ -233,19 +334,31 @@ class McpHttpClient(
 
         // Streamable HTTP may return Server-Sent Events. SSE allows one JSON
         // value to span multiple `data:` lines, so accumulate each event and
-        // keep the last valid JSON-RPC message.
-        var last: JSONObject? = null
+        // prefer the message whose JSON-RPC id matches this request.
+        var fallback: JSONObject? = null
+        var match: JSONObject? = null
         val data = StringBuilder()
 
         fun acceptEvent() {
             if (data.isEmpty()) return
             val payload = data.toString().trim()
             data.setLength(0)
-            if (payload.isEmpty() || !payload.startsWith("{")) return
+            if (payload.isEmpty() || (!payload.startsWith("{") && !payload.startsWith("["))) return
             try {
-                val candidate = JSONObject(payload)
-                if (candidate.has("result") || candidate.has("error")) {
-                    last = candidate
+                if (payload.startsWith("[")) {
+                    val array = JSONArray(payload)
+                    for (index in 0 until array.length()) {
+                        val candidate = array.optJSONObject(index) ?: continue
+                        if (!candidate.has("result") && !candidate.has("error")) continue
+                        if (matchesId(candidate, expectedId)) match = candidate
+                        else fallback = candidate
+                    }
+                } else {
+                    val candidate = JSONObject(payload)
+                    if (candidate.has("result") || candidate.has("error")) {
+                        if (matchesId(candidate, expectedId)) match = candidate
+                        else fallback = candidate
+                    }
                 }
             } catch (_: Exception) {
                 // Ignore heartbeat/non-JSON SSE data.
@@ -261,7 +374,12 @@ class McpHttpClient(
             }
         }
         acceptEvent()
-        return last
+        return match ?: fallback
+    }
+
+    private fun matchesId(candidate: JSONObject, expectedId: Int): Boolean {
+        if (expectedId == Int.MIN_VALUE) return false
+        return candidate.optInt("id", Int.MIN_VALUE) == expectedId
     }
 
     private fun extractText(result: JSONObject): String {
@@ -299,6 +417,13 @@ class McpHttpClient(
     )
 
     private companion object {
+        const val TAG = "McpHttpClient"
+
+        /**
+         * Newest first. The server answers with the version it supports and the
+         * negotiated value is used for the rest of the session.
+         */
+        val CLIENT_PROTOCOL_VERSIONS = listOf("2025-06-18", "2024-11-05")
         const val PROTOCOL_VERSION = "2024-11-05"
         const val MAX_TOOL_PAGES = 5
         const val MAX_TOOLS = 100

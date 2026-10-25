@@ -105,8 +105,10 @@ A recording or a good voice clone can pass. It is off by default.
 | `JarvisVoiceInteractionService` / session service | Exported | `BIND_VOICE_INTERACTION` — only the system. |
 | `ShizukuProvider` | Exported | Shizuku API permission + `INTERACT_ACROSS_USERS_FULL`. |
 | `JarvisConversationService` | Not exported | Internal start only. |
+| `WakeWordService` | Not exported | Internal start only; runs in `:wake`. |
+| `WakeBootReceiver` | Exported | System boot/package-replace broadcasts only; starts the non-exported wake service. |
 
-No broadcast receivers or deep links are exported.
+There are no deep links.
 
 ### T6 — Data at rest
 
@@ -114,7 +116,7 @@ No broadcast receivers or deep links are exported.
 | --- | --- |
 | API key and MCP tokens encrypted | `EncryptedSharedPreferences` |
 | `allowBackup=false` | Manifest |
-| No external storage writes for app data | Code |
+| Uninstall snapshot encrypted | AES-256-GCM, key derived from the signing certificate, stored in `Downloads/Jarvis` |
 | Chat history capped and user-clearable | `ChatRepository`, UI |
 
 **Residual risk:** chat history, memory DB and the owner voice profile are

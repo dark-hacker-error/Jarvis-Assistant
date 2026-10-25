@@ -16,6 +16,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.CAMERA" />
@@ -25,6 +26,16 @@
     <uses-permission android:name="android.permission.CALL_PHONE" />
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
+    <!-- Android 8/9 only: the uninstall-surviving backup falls back to a
+         direct Downloads/Jarvis file there. Android 10+ uses MediaStore and
+         needs no storage permission. -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
 
     <!-- Shizuku app-level permission. The API AAR normally contributes this,
          but declaring it explicitly prevents it from being stripped by
@@ -145,6 +156,30 @@
             android:exported="false"
             android:stopWithTask="false"
             android:foregroundServiceType="microphone|mediaPlayback|mediaProjection" />
+
+        <!-- Part 1: ultra-light wake word + owner verification. It runs in an
+             isolated process so Room, TTS, Gemini, MCP, Shizuku, backup and
+             the Vosk ASR model are never loaded while the heavy Jarvis app is
+             asleep. Part 2 is started only after a verified owner wake. -->
+        <service
+            android:name=".wake.WakeWordService"
+            android:exported="false"
+            android:process=":wake"
+            android:stopWithTask="false"
+            android:foregroundServiceType="microphone" />
+
+        <receiver
+            android:name=".wake.WakeBootReceiver"
+            android:enabled="true"
+            android:exported="true"
+            android:process=":wake">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="android.intent.action.HTC_QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
 
         <service
             android:name=".automation.accessibility.JarvisAccessibilityService"

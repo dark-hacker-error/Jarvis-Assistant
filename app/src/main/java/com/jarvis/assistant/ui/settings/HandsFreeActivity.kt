@@ -10,12 +10,15 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.jarvis.assistant.R
+import com.jarvis.assistant.JarvisApp
 import com.jarvis.assistant.databinding.ActivityHandsFreeBinding
 import com.jarvis.assistant.ui.permission.PermissionActivity
+import com.jarvis.assistant.ui.voice.VoiceEnrollmentActivity
 import com.jarvis.assistant.util.PermissionHelper
 import com.jarvis.assistant.util.SocialLinks
 import com.jarvis.assistant.util.ThemeManager
 import com.jarvis.assistant.voice.KernelSuRuntimeHelper
+import com.jarvis.assistant.wake.WakeContract
 import kotlinx.coroutines.launch
 
 class HandsFreeActivity : AppCompatActivity() {
@@ -36,6 +39,7 @@ class HandsFreeActivity : AppCompatActivity() {
         super.onResume()
         updateServiceStatus()
         updateNativeWakeStatus()
+        updateWakeServiceStatus()
     }
 
     private fun setupListeners() {
@@ -49,6 +53,10 @@ class HandsFreeActivity : AppCompatActivity() {
 
         binding.btnActivateNativeWake.setOnClickListener {
             activateNativeWake()
+        }
+
+        binding.btnToggleWakeService.setOnClickListener {
+            toggleWakeService()
         }
 
         binding.btnOpenAccessibilitySettings.setOnClickListener {
@@ -125,6 +133,83 @@ class HandsFreeActivity : AppCompatActivity() {
                 }
             )
         )
+    }
+
+    private fun updateWakeServiceStatus() {
+        val prefs = (application as JarvisApp).preferences
+        val enabled = prefs.isWakeServiceEnabled
+        val running = WakeContract.isServiceRunning(this)
+        val micAllowed = PermissionHelper.hasRecordAudioPermission(this)
+        val needsEnrollment = prefs.isOwnerVoiceEnabled && !prefs.hasAnyOwnerVoiceProfile()
+        val overlayAllowed = Settings.canDrawOverlays(this)
+
+        val status = when {
+            running -> "PART 1 ACTIVE • SAY \"JARVIS\""
+            enabled && !micAllowed -> "MICROPHONE PERMISSION NEEDED"
+            enabled && needsEnrollment -> "ENABLED • ENROLL OWNER VOICE"
+            enabled && !overlayAllowed -> "ENABLED • ALLOW OVERLAY FOR THE ORB"
+            enabled -> "ENABLED • STARTING..."
+            else -> "PART 1 OFF • LEGACY STANDBY ACTIVE"
+        }
+        binding.tvWakeServiceStatus.text = status
+        binding.tvWakeServiceStatus.setTextColor(
+            ContextCompat.getColor(
+                this,
+                when {
+                    running -> R.color.status_green
+                    enabled -> R.color.status_amber
+                    else -> R.color.status_red
+                }
+            )
+        )
+        binding.btnToggleWakeService.text =
+            if (enabled) "Disable Ultra-Light Wake" else "Enable Ultra-Light Wake"
+    }
+
+    private fun toggleWakeService() {
+        val prefs = (application as JarvisApp).preferences
+        if (prefs.isWakeServiceEnabled) {
+            prefs.isWakeServiceEnabled = false
+            WakeContract.stop(this)
+            Toast.makeText(
+                this,
+                "Ultra-light wake disabled. The legacy standby listener will be used.",
+                Toast.LENGTH_LONG
+            ).show()
+            updateWakeServiceStatus()
+            return
+        }
+
+        if (!PermissionHelper.hasRecordAudioPermission(this)) {
+            Toast.makeText(
+                this,
+                "Allow Microphone first to use the wake word.",
+                Toast.LENGTH_LONG
+            ).show()
+            startActivity(Intent(this, PermissionActivity::class.java))
+            return
+        }
+
+        prefs.isWakeServiceEnabled = true
+        if (prefs.isOwnerVoiceEnabled && !prefs.hasAnyOwnerVoiceProfile()) {
+            Toast.makeText(
+                this,
+                "Enroll your voice first. Wake only reacts to the owner.",
+                Toast.LENGTH_LONG
+            ).show()
+            startActivity(Intent(this, VoiceEnrollmentActivity::class.java))
+            updateWakeServiceStatus()
+            return
+        }
+
+        val started = WakeContract.start(this)
+        Toast.makeText(
+            this,
+            if (started) "Ultra-light wake enabled. Say \"Jarvis\"."
+            else "Could not start wake service. Check permissions.",
+            Toast.LENGTH_LONG
+        ).show()
+        updateWakeServiceStatus()
     }
 
     private fun activateNativeWake() {

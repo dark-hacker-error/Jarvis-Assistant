@@ -6,40 +6,71 @@ are the stable reference.
 
 ## 1. Wake word → conversation start
 
+Part 1 (`:wake`) is the always-on microphone owner. Part 2 (main process) is
+started only after the keyword **and** the owner voice match succeed; it shows
+the floating orb instead of opening `MainActivity`.
+
 ```mermaid
 sequenceDiagram
+    participant WWS as WakeWordService (:wake)
     participant KWS as SherpaOnnxWakeWordEngine
-    participant BUS as AudioCaptureBus
-    participant VIS as JarvisVoiceInteractionService
-    participant SVC as JarvisConversationService
+    participant SPK as WeSpeaker CAM++ verifier
+    participant SVC as JarvisConversationService (Part 2)
+    participant BUS as AudioCaptureBus (main)
+    participant ORB as Floating orb
     participant WS as GeminiLiveWebSocket
 
-    KWS->>BUS: register(listener) (first listener opens AudioRecord)
-    BUS-->>KWS: 20 ms frames (640 B)
-    KWS->>KWS: split into 10 ms (320 B) slices, decode
-    KWS->>KWS: keyword match + 1.5 s cooldown
-    KWS->>BUS: beginHandoff(3500 ms)  (copies last 2 s pre-roll)
-    KWS->>KWS: detach listener, pause
-    KWS->>VIS: onWakeWord() on main looper
-    VIS->>VIS: attach floating orb, showSession()
-    VIS->>SVC: startForegroundService(ACTION_START_CONVERSATION)
-    SVC->>BUS: register(AudioRecorder listener)
-    SVC->>BUS: drainHandoff() → flush pre-roll to socket
-    SVC->>WS: connect + setup
-    WS-->>SVC: setupComplete
-    SVC->>SVC: state LISTENING, orb animates
+    WWS->>KWS: start() (owns AudioRecord via AudioCaptureBus)
+    KWS-->>WWS: onWakeWord("Jarvis")
+    WWS->>KWS: recentAudio(2400 ms)
+    WWS->>SPK: embed same 16 kHz buffer
+    alt speaker mismatch
+        SPK-->>WWS: distance > threshold
+        WWS->>KWS: resume()
+    else owner verified
+        SPK-->>WWS: match
+        WWS->>KWS: pause()
+        WWS->>BUS: shutdownForHandoff() (release AudioRecord)
+        WWS->>SVC: startForegroundService(ACTION_START_CONVERSATION + pre-roll)
+        SVC->>BUS: seedExternalPreroll(pre-roll)
+        SVC->>BUS: register(AudioRecorder)
+        SVC->>BUS: drainHandoff() → flush pre-roll to socket
+        SVC->>ORB: show(LISTENING)
+        SVC->>WS: connect + setup
+        WS-->>SVC: setupComplete
+        SVC->>SVC: state LISTENING, orb reacts to amplitude
+    end
 ```
 
 Key details:
 
+- `WakeWordService` runs in the `:wake` process declared in the manifest. That
+  process initialises only `JarvisApp.instance` and a lightweight
+  `AppPreferences`; Room, TTS, Gemini, MCP, Shizuku, backup and the 68 MB Vosk
+  ASR model are never loaded there.
 - `AudioCaptureBus.register()` starts the single `AudioRecord`; it is reference
   counted by listeners plus the hand-off lease.
-- `beginHandoff()` copies the last 2 seconds (`MAX_RECENT_FRAMES = 100`) into the
-  hand-off deque and keeps recording for up to 3.5 s, so the command onset is
-  not lost between two microphone owners.
-- The wake engine never releases the model on pause; `resume()` resets the
-  stream and re-attaches, avoiding ONNX init cost.
-- Cooldown is 1.5 s to prevent double triggers.
+- The keyword spotter keeps a recent-PCM ring buffer. Owner verification runs
+  once on the **same** buffer that produced "Jarvis" — there is no second
+  verification phrase.
+- New enrollments store a WeSpeaker CAM++ profile. Existing Vosk x-vector
+  profiles still work as a fallback, and `:wake` loads only the 15 MB speaker
+  model for them, never the ASR model.
+- On a mismatch the service simply resumes listening; Part 2 is not started.
+- On a match Part 1 pauses the spotter and releases the microphone before
+  starting Part 2. The recent PCM travels in `EXTRA_WAKE_PREROLL`, and Part 2
+  seeds `AudioCaptureBus` before `AudioRecorder` attaches, so the command onset
+  is preserved across processes.
+- Part 2 never opens `MainActivity`. It attaches the bottom-centre orb, which
+  breathes while silent and reacts to mic RMS and TTS amplitude.
+- When the session ends (inactivity, `go_to_background`, orb long-press or
+  full stop), Part 2 calls `ACTION_RESUME_AFTER_SESSION`; Part 1 waits 700 ms
+  for the recorder to close, then reattaches the keyword spotter.
+- System-assistant/assist gestures use `JarvisVoiceInteractionService`, which
+  pauses Part 1 for the session and resumes it afterwards. It does not run a
+  duplicate wake listener while Part 1 is the active owner.
+- If Part 1 is disabled or not running, Part 2 falls back to its legacy
+  in-process standby spotter.
 
 ## 2. Voice turn lifecycle
 

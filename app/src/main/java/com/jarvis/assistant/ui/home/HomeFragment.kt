@@ -300,17 +300,26 @@ class HomeFragment : Fragment() {
                         viewModel.isSessionOn,
                         viewModel.isMicMuted,
                         viewModel.conversationState,
-                        com.jarvis.assistant.background.JarvisConversationService.isStandby
-                    ) { isOn, isMuted, state, isStandby ->
-                        HomeStatusState(isOn, isMuted, state, isStandby)
+                        com.jarvis.assistant.background.JarvisConversationService.isStandby,
+                        com.jarvis.assistant.wake.WakeStatus.isListening
+                    ) { isOn, isMuted, state, isStandby, wakeListening ->
+                        HomeStatusState(isOn, isMuted, state, isStandby, wakeListening)
                     }.collect { status ->
                         if (!status.isOn) {
                             setOrbState("idle")
-                            binding.tvListeningStatus.text = "JARVIS OFF • TAP TO START"
-                            binding.tvListeningStatus.setTextColor(ContextCompat.getColor(requireContext(), R.color.text_subtle))
-                            binding.dotStatusGlow.backgroundTintList = ColorStateList.valueOf(
-                                Color.parseColor("#64748B")
-                            )
+                            if (status.wakeListening) {
+                                binding.tvListeningStatus.text = "WAKE WORD ACTIVE • SAY JARVIS"
+                                binding.tvListeningStatus.setTextColor(Color.parseColor("#3B82F6"))
+                                binding.dotStatusGlow.backgroundTintList = ColorStateList.valueOf(
+                                    Color.parseColor("#3B82F6")
+                                )
+                            } else {
+                                binding.tvListeningStatus.text = "JARVIS OFF • TAP TO START"
+                                binding.tvListeningStatus.setTextColor(ContextCompat.getColor(requireContext(), R.color.text_subtle))
+                                binding.dotStatusGlow.backgroundTintList = ColorStateList.valueOf(
+                                    Color.parseColor("#64748B")
+                                )
+                            }
                         } else if (status.isMuted) {
                             setOrbState("idle")
                             binding.tvListeningStatus.text = "MIC MUTED • TAP TO TALK"
@@ -558,5 +567,6 @@ private data class HomeStatusState(
     val isOn: Boolean,
     val isMuted: Boolean,
     val state: ConversationState,
-    val isStandby: Boolean
+    val isStandby: Boolean,
+    val wakeListening: Boolean
 )

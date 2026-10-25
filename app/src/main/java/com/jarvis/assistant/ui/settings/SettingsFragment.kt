@@ -1,17 +1,22 @@
 package com.jarvis.assistant.ui.settings
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.jarvis.assistant.JarvisApp
 import com.jarvis.assistant.R
@@ -22,12 +27,32 @@ import com.jarvis.assistant.ui.memory.MemoryActivity
 import com.jarvis.assistant.ui.permission.PermissionActivity
 import com.jarvis.assistant.ui.voice.VoiceEnrollmentActivity
 import com.jarvis.assistant.util.SocialLinks
+import kotlinx.coroutines.launch
 
 class SettingsFragment : Fragment() {
 
     private var _binding: FragmentSettingsBinding? = null
     private val binding get() = _binding!!
     private val preferences by lazy { JarvisApp.instance.preferences }
+
+    private var pendingStorageAction: (() -> Unit)? = null
+
+    private val backupStorageLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { grants ->
+        val action = pendingStorageAction
+        pendingStorageAction = null
+        val granted = grants.values.all { it }
+        if (granted && action != null) {
+            action()
+        } else if (!granted) {
+            Toast.makeText(
+                requireContext(),
+                "Storage permission is needed for the Android 8/9 backup file",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -139,6 +164,13 @@ class SettingsFragment : Fragment() {
             "$enabledServers MCP(s) enabled • $enabledTools tools available"
         }
         binding.tvShizukuSummary.text = app.shizukuManager.statusText()
+        binding.tvBackupSummary.text = app.backupCoordinator.statusText()
+        lifecycleScope.launch {
+            app.backupCoordinator.refreshStatus()
+            if (_binding != null) {
+                binding.tvBackupSummary.text = app.backupCoordinator.statusText()
+            }
+        }
     }
 
     private fun setupClickListeners() {
@@ -200,6 +232,10 @@ class SettingsFragment : Fragment() {
             startActivity(Intent(requireContext(), ShizukuSettingsActivity::class.java))
         }
 
+        binding.rowBackupRestore.setOnClickListener {
+            showBackupDialog()
+        }
+
         // Section 3: Appearance & Security
         binding.rowAppTheme.setOnClickListener {
             ThemeSelectionBottomSheet.newInstance().show(childFragmentManager, ThemeSelectionBottomSheet.TAG)
@@ -236,6 +272,128 @@ class SettingsFragment : Fragment() {
 
         binding.tvFooterCredit.setOnClickListener {
             openUrl(SocialLinks.WEBSITE)
+        }
+    }
+
+    private fun showBackupDialog() {
+        val app = JarvisApp.instance
+        val status = app.backupCoordinator.statusText()
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle("Backup & Restore")
+            .setMessage(
+                "$status\n\n" +
+                    "The snapshot is encrypted and stored in Downloads/Jarvis. It survives an " +
+                    "app uninstall and is restored automatically after reinstalling with the " +
+                    "same signing key.\n\n" +
+                    "Included: memories, chat history, personal preferences, Gemini/YouTube " +
+                    "API keys and custom MCP servers. Local values always win, so restoring " +
+                    "never overwrites something you changed later."
+            )
+            .setItems(arrayOf("Backup now", "Restore from backup", "Delete backup")) { _, which ->
+                when (which) {
+                    0 -> withBackupStorage { performBackup() }
+                    1 -> withBackupStorage { performRestore() }
+                    2 -> confirmDeleteBackup()
+                }
+            }
+            .setNegativeButton("Close", null)
+            .show()
+    }
+
+    private fun withBackupStorage(action: () -> Unit) {
+        if (Build.VERSION.SDK_INT > Build.VERSION_CODES.P) {
+            action()
+            return
+        }
+        val readGranted = ContextCompat.checkSelfPermission(
+            requireContext(),
+            Manifest.permission.READ_EXTERNAL_STORAGE
+        ) == PackageManager.PERMISSION_GRANTED
+        val writeGranted = ContextCompat.checkSelfPermission(
+            requireContext(),
+            Manifest.permission.WRITE_EXTERNAL_STORAGE
+        ) == PackageManager.PERMISSION_GRANTED
+        if (readGranted && writeGranted) {
+            action()
+            return
+        }
+        pendingStorageAction = action
+        backupStorageLauncher.launch(
+            arrayOf(
+                Manifest.permission.READ_EXTERNAL_STORAGE,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE
+            )
+        )
+    }
+
+    private fun performBackup() {
+        val app = JarvisApp.instance
+        lifecycleScope.launch {
+            val result = app.backupCoordinator.backupNow("manual", force = true)
+            app.backupCoordinator.refreshStatus()
+            updateBackupSummary()
+            val message = result.fold(
+                onSuccess = { "Encrypted backup saved to ${app.backupCoordinator.statusText()}" },
+                onFailure = { "Backup failed: ${it.message ?: it.javaClass.simpleName}" }
+            )
+            Toast.makeText(requireContext(), message, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun performRestore() {
+        val app = JarvisApp.instance
+        lifecycleScope.launch {
+            val report = app.backupCoordinator.restoreNow()
+            app.backupCoordinator.refreshStatus()
+            updateBackupSummary()
+            val message = when {
+                report.error.isNotBlank() -> "Restore failed: ${report.error}"
+                report.restored -> buildString {
+                    append("Restore complete.")
+                    if (report.memories > 0) append("\n• ${report.memories} memories")
+                    if (report.chatTurns > 0) append("\n• ${report.chatTurns} chat turns")
+                    if (report.geminiKey) append("\n• Gemini API key")
+                    if (report.youtubeKey) append("\n• YouTube API key")
+                    if (report.customServers > 0) append("\n• ${report.customServers} custom MCP server(s)")
+                    if (report.preferencesRestored) append("\n• Personal preferences")
+                }
+                else -> "Nothing new to restore. Local data already contains everything from the backup."
+            }
+            MaterialAlertDialogBuilder(requireContext())
+                .setTitle(if (report.error.isNotBlank()) "Restore failed" else "Backup restore")
+                .setMessage(message)
+                .setPositiveButton("OK", null)
+                .show()
+        }
+    }
+
+    private fun confirmDeleteBackup() {
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle("Delete persistent backup?")
+            .setMessage(
+                "This permanently removes the encrypted snapshot from Downloads/Jarvis. " +
+                    "Memories and API keys already on this device stay untouched."
+            )
+            .setPositiveButton("Delete") { _, _ ->
+                val app = JarvisApp.instance
+                lifecycleScope.launch {
+                    val deleted = app.backupCoordinator.deleteBackup()
+                    app.backupCoordinator.refreshStatus()
+                    updateBackupSummary()
+                    Toast.makeText(
+                        requireContext(),
+                        if (deleted) "Persistent backup deleted" else "Could not delete the backup",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun updateBackupSummary() {
+        if (_binding != null) {
+            binding.tvBackupSummary.text = JarvisApp.instance.backupCoordinator.statusText()
         }
     }
 

@@ -58,23 +58,6 @@ data class McpRemoteTool(
     val inputSchema: JSONObject? = null
 )
 
-data class McpPendingAction(
-    val toolId: String,
-    val toolName: String,
-    val serverName: String,
-    val arguments: JSONObject,
-    val risk: McpRisk,
-    val description: String,
-    val createdAt: Long = System.currentTimeMillis()
-) {
-    fun isExpired(now: Long = System.currentTimeMillis()): Boolean =
-        now - createdAt > PENDING_TIMEOUT_MS
-
-    companion object {
-        const val PENDING_TIMEOUT_MS = 2 * 60 * 1000L
-    }
-}
-
 sealed class McpExecutionResult {
     data class Success(
         val message: String,
@@ -84,11 +67,6 @@ sealed class McpExecutionResult {
     data class Failure(
         val message: String,
         val permissionRequired: Boolean = false
-    ) : McpExecutionResult()
-
-    data class ConfirmationRequired(
-        val pending: McpPendingAction,
-        val prompt: String
     ) : McpExecutionResult()
 }
 

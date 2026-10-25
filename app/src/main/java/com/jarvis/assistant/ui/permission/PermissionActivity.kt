@@ -18,11 +18,13 @@ import androidx.core.content.ContextCompat
 import androidx.core.widget.NestedScrollView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
 import com.jarvis.assistant.JarvisApp
 import com.jarvis.assistant.databinding.ActivityPermissionBinding
 import com.jarvis.assistant.ui.settings.ShizukuSettingsActivity
 import com.jarvis.assistant.util.PermissionHelper
 import com.jarvis.assistant.util.ThemeManager
+import kotlinx.coroutines.launch
 
 class PermissionActivity : AppCompatActivity() {
 
@@ -47,6 +49,20 @@ class PermissionActivity : AppCompatActivity() {
     private val callLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { updatePermissionStates() }
     private val cameraLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { updatePermissionStates() }
     private val bluetoothLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { updatePermissionStates() }
+    private val storageLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { grants ->
+        updatePermissionStates()
+        if (grants.values.all { it }) {
+            // Android 8/9 only: after storage is granted, finish the restore
+            // that could not read the backup during startup.
+            lifecycleScope.launch {
+                val app = JarvisApp.instance
+                app.backupCoordinator.restoreIfNeeded()
+                app.backupCoordinator.requestImmediateBackup("storage-granted")
+            }
+        }
+    }
     private val extraStatus = mutableMapOf<String, TextView>()
     private val extraButtons = mutableMapOf<String, Button>()
 
@@ -132,6 +148,13 @@ class PermissionActivity : AppCompatActivity() {
         updateExtraPermission("battery", PermissionHelper.hasBatteryOptimizationPermission(this))
         updateExtraPermission("brightness", PermissionHelper.hasWriteSettingsPermission(this))
         updateExtraPermission("shizuku", JarvisApp.instance.shizukuManager.hasPermission())
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
+            updateExtraPermission(
+                "storage",
+                hasPermission(Manifest.permission.READ_EXTERNAL_STORAGE) &&
+                    hasPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            )
+        }
 
         if (hasMic && hasLoc && hasNotif && hasA11y) {
             binding.btnGrantAll.text = "ALL ESSENTIAL PERMISSIONS GRANTED ✓"
@@ -177,6 +200,14 @@ class PermissionActivity : AppCompatActivity() {
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !hasPermission(Manifest.permission.BLUETOOTH_CONNECT)) {
             missing.add(Manifest.permission.BLUETOOTH_CONNECT)
+        }
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
+            if (!hasPermission(Manifest.permission.READ_EXTERNAL_STORAGE)) {
+                missing.add(Manifest.permission.READ_EXTERNAL_STORAGE)
+            }
+            if (!hasPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)) {
+                missing.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            }
         }
 
         if (missing.isNotEmpty()) {
@@ -251,6 +282,22 @@ class PermissionActivity : AppCompatActivity() {
         }
         card("brightness", "Modify system settings", "Optional: lets JARVIS adjust screen brightness when you ask.", com.jarvis.assistant.R.drawable.ic_settings_palette) {
             PermissionHelper.requestWriteSettings(this)
+        }
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
+            card("storage", "Backup storage", "Android 8/9 needs storage access so the encrypted backup in Downloads/Jarvis can survive an uninstall and be restored automatically.", com.jarvis.assistant.R.drawable.ic_settings_db) {
+                if (!hasPermission(Manifest.permission.READ_EXTERNAL_STORAGE) ||
+                    !hasPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                ) {
+                    storageLauncher.launch(
+                        arrayOf(
+                            Manifest.permission.READ_EXTERNAL_STORAGE,
+                            Manifest.permission.WRITE_EXTERNAL_STORAGE
+                        )
+                    )
+                } else {
+                    PermissionHelper.openAppSettings(this)
+                }
+            }
         }
         val note = TextView(this).apply {
             text = "Screen sharing uses Android’s one-time screen-capture confirmation when you start sharing. Internet, network, notifications, and foreground-service access are managed by Android."

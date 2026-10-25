@@ -1,5 +1,6 @@
 package com.jarvis.assistant.data.repository
 
+import com.jarvis.assistant.data.backup.BackupTriggers
 import com.jarvis.assistant.data.model.ChatTurn
 import com.jarvis.assistant.data.preferences.AppPreferences
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -12,6 +13,12 @@ class ChatRepository(private val preferences: AppPreferences) {
     val turns: StateFlow<List<ChatTurn>> = _turns.asStateFlow()
 
     init {
+        _turns.value = preferences.loadChatHistory()
+    }
+
+    /** Re-reads persisted history, e.g. after a backup restore. */
+    @Synchronized
+    fun reloadFromPreferences() {
         _turns.value = preferences.loadChatHistory()
     }
 
@@ -43,12 +50,14 @@ class ChatRepository(private val preferences: AppPreferences) {
 
         _turns.value = currentList
         preferences.saveChatHistory(currentList)
+        BackupTriggers.request("chat-turn")
     }
 
     @Synchronized
     fun clearHistory() {
         _turns.value = emptyList()
         preferences.clearChatHistory()
+        BackupTriggers.request("chat-clear")
     }
 
     /**
@@ -75,6 +84,7 @@ class ChatRepository(private val preferences: AppPreferences) {
 
         _turns.value = currentList
         preferences.saveChatHistory(currentList)
+        BackupTriggers.request("chat-turn")
         return true
     }
 
@@ -98,6 +108,7 @@ class ChatRepository(private val preferences: AppPreferences) {
         currentList[index] = currentList[index].copy(jarvisResponse = cleanReply)
         _turns.value = currentList
         preferences.saveChatHistory(currentList)
+        BackupTriggers.request("chat-turn")
         return true
     }
 
@@ -117,6 +128,7 @@ class ChatRepository(private val preferences: AppPreferences) {
         currentList[index] = currentList[index].copy(jarvisResponse = cleanReply)
         _turns.value = currentList
         preferences.saveChatHistory(currentList)
+        BackupTriggers.request("chat-turn")
         return true
     }
 }

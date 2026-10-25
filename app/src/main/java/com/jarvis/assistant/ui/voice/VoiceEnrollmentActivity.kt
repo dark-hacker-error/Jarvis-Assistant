@@ -39,6 +39,7 @@ class VoiceEnrollmentActivity : AppCompatActivity() {
     )
 
     private val recordedVectors = mutableListOf<FloatArray>()
+    private val recordedSherpaVectors = mutableListOf<FloatArray>()
     private var currentSampleIndex = 0
 
     private var isRecording = false
@@ -79,7 +80,7 @@ class VoiceEnrollmentActivity : AppCompatActivity() {
     }
 
     private fun setupUI() {
-        val hasProfile = preferences.hasOwnerVoiceProfile()
+        val hasProfile = preferences.hasAnyOwnerVoiceProfile()
         val isEnabled = preferences.isOwnerVoiceEnabled && hasProfile
 
         binding.switchOwnerOnly.isChecked = isEnabled
@@ -149,6 +150,7 @@ class VoiceEnrollmentActivity : AppCompatActivity() {
                 if (currentSampleIndex >= samplePrompts.size) {
                     // Reset to start over
                     recordedVectors.clear()
+                    recordedSherpaVectors.clear()
                     currentSampleIndex = 0
                     updateEnrollmentStepUI()
                 }
@@ -166,9 +168,18 @@ class VoiceEnrollmentActivity : AppCompatActivity() {
 
         binding.rgSensitivity.setOnCheckedChangeListener { _, checkedId ->
             when (checkedId) {
-                R.id.rbStrict -> preferences.ownerVoiceThreshold = OwnerVoiceManager.STRICT_THRESHOLD
-                R.id.rbBalanced -> preferences.ownerVoiceThreshold = OwnerVoiceManager.DEFAULT_THRESHOLD
-                R.id.rbRelaxed -> preferences.ownerVoiceThreshold = OwnerVoiceManager.RELAXED_THRESHOLD
+                R.id.rbStrict -> {
+                    preferences.ownerVoiceThreshold = OwnerVoiceManager.STRICT_THRESHOLD
+                    preferences.ownerVoiceSherpaThreshold = OwnerVoiceManager.SHERPA_STRICT_THRESHOLD
+                }
+                R.id.rbBalanced -> {
+                    preferences.ownerVoiceThreshold = OwnerVoiceManager.DEFAULT_THRESHOLD
+                    preferences.ownerVoiceSherpaThreshold = OwnerVoiceManager.SHERPA_DEFAULT_THRESHOLD
+                }
+                R.id.rbRelaxed -> {
+                    preferences.ownerVoiceThreshold = OwnerVoiceManager.RELAXED_THRESHOLD
+                    preferences.ownerVoiceSherpaThreshold = OwnerVoiceManager.SHERPA_RELAXED_THRESHOLD
+                }
             }
             Toast.makeText(this, "Sensitivity updated", Toast.LENGTH_SHORT).show()
         }
@@ -180,6 +191,7 @@ class VoiceEnrollmentActivity : AppCompatActivity() {
                 .setPositiveButton("RESET") { _, _ ->
                     preferences.clearOwnerVoiceProfile()
                     recordedVectors.clear()
+                    recordedSherpaVectors.clear()
                     currentSampleIndex = 0
                     setupUI()
                     Toast.makeText(this, "Voice profile cleared", Toast.LENGTH_SHORT).show()
@@ -225,23 +237,44 @@ class VoiceEnrollmentActivity : AppCompatActivity() {
         binding.tvRecordFeedback.text = "Analyzing vocal acoustic signature..."
 
         lifecycleScope.launch(Dispatchers.Default) {
-            val vector = OwnerVoiceManager.extractSpeakerVector(pcmAudio)
+            // Keep the legacy Vosk x-vector in sync for older devices, and add
+            // the compact WeSpeaker embedding used by the one-shot wake path.
+            val legacyVector = OwnerVoiceManager.extractSpeakerVector(pcmAudio)
+            val sherpaVector = OwnerVoiceManager.extractSherpaVector(applicationContext, pcmAudio)
 
             withContext(Dispatchers.Main) {
                 binding.btnRecordSample.isEnabled = true
                 binding.btnRecordSample.setBackgroundColor(getColor(R.color.primary_cyan))
 
-                if (vector != null && vector.isNotEmpty()) {
-                    recordedVectors.add(vector)
+                if ((legacyVector != null && legacyVector.isNotEmpty()) ||
+                    (sherpaVector != null && sherpaVector.isNotEmpty())
+                ) {
+                    if (legacyVector != null && legacyVector.isNotEmpty()) recordedVectors.add(legacyVector)
+                    if (sherpaVector != null && sherpaVector.isNotEmpty()) recordedSherpaVectors.add(sherpaVector)
                     currentSampleIndex++
 
                     if (currentSampleIndex >= samplePrompts.size) {
-                        // Average vectors and save both centroid and individual samples
                         val masterProfile = OwnerVoiceManager.averageVectors(recordedVectors)
+                        val sherpaMasterProfile = OwnerVoiceManager.averageVectors(recordedSherpaVectors)
+
                         if (masterProfile != null) {
                             preferences.saveOwnerVoiceProfile(masterProfile, recordedVectors)
+                        }
+                        if (sherpaMasterProfile != null) {
+                            preferences.saveOwnerVoiceSherpaProfile(sherpaMasterProfile, recordedSherpaVectors)
+                        }
+                        if (masterProfile != null || sherpaMasterProfile != null) {
                             preferences.isOwnerVoiceEnabled = true
-                            Toast.makeText(this@VoiceEnrollmentActivity, "Voice profile trained successfully!", Toast.LENGTH_LONG).show()
+                            val engine = when {
+                                sherpaMasterProfile != null && masterProfile != null -> "Sherpa + Vosk"
+                                sherpaMasterProfile != null -> "Sherpa"
+                                else -> "Vosk"
+                            }
+                            Toast.makeText(
+                                this@VoiceEnrollmentActivity,
+                                "Voice profile trained successfully ($engine)!",
+                                Toast.LENGTH_LONG
+                            ).show()
                             setupUI()
                         } else {
                             Toast.makeText(this@VoiceEnrollmentActivity, "Failed to average voice vectors. Please retry.", Toast.LENGTH_SHORT).show()
@@ -260,7 +293,7 @@ class VoiceEnrollmentActivity : AppCompatActivity() {
 
     @SuppressLint("MissingPermission")
     private fun startTestingVoice() {
-        if (!preferences.hasOwnerVoiceProfile()) {
+        if (!preferences.hasAnyOwnerVoiceProfile()) {
             Toast.makeText(this, "Please enroll your voice samples first!", Toast.LENGTH_SHORT).show()
             return
         }
@@ -307,7 +340,7 @@ class VoiceEnrollmentActivity : AppCompatActivity() {
         binding.btnTestVoice.isEnabled = false
 
         lifecycleScope.launch(Dispatchers.Default) {
-            val result = OwnerVoiceManager.verifySpeakerAudio(pcmAudio, preferences)
+            val result = OwnerVoiceManager.verifyBestAvailableAudio(applicationContext, pcmAudio, preferences)
 
             withContext(Dispatchers.Main) {
                 binding.btnTestVoice.isEnabled = true
